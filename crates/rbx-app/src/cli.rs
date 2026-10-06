@@ -9,6 +9,10 @@ pub enum Command {
     Player(Options),
     /// Open the settings window (the default when run with no arguments).
     Settings,
+    /// Point roblox:// links at this exe and exit (run by the installer).
+    Register,
+    /// Undo `Register` (run by the uninstaller).
+    Unregister,
     Help,
 }
 
@@ -62,8 +66,11 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
         };
 
         let flag = flag.to_ascii_lowercase();
-        if matches!(flag.as_str(), "settings" | "menu" | "preferences") {
-            return Ok(Command::Settings);
+        match flag.as_str() {
+            "settings" | "menu" | "preferences" => return Ok(Command::Settings),
+            "register" => return Ok(Command::Register),
+            "unregister" | "uninstall" => return Ok(Command::Unregister),
+            _ => {}
         }
         any_player_arg = true;
 
@@ -91,11 +98,11 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
 }
 
 pub const USAGE: &str = "\
-robloxbootstrapper: installs, updates and launches Roblox
+Rusticean: installs, updates and launches Roblox
 
 USAGE:
-    robloxbootstrapper                      Open settings
-    robloxbootstrapper -player [URI] [FLAGS]  Install/update Roblox and launch it
+    Rusticean                          Open settings
+    Rusticean -player [URI] [FLAGS]    Install/update Roblox and launch it
 
 Launching also registers it as the handler for roblox:// and roblox-player:// links.
 
@@ -107,6 +114,8 @@ FLAGS:
     -force             Reinstall even if the version is already present
     -nolaunch          Install or update, but don't start Roblox
     -quiet             Don't show the progress window
+    -register          Only register the roblox:// link handler
+    -unregister        Remove the link handler (used by the uninstaller)
     -help              Show this message
 ";
 
@@ -123,6 +132,12 @@ mod tests {
         assert_eq!(p(&[]), Ok(Command::Settings));
         assert_eq!(p(&["-settings"]), Ok(Command::Settings));
         assert_eq!(p(&["-player"]), Ok(Command::Player(Options::default())));
+    }
+
+    #[test]
+    fn installer_commands() {
+        assert_eq!(p(&["-register"]), Ok(Command::Register));
+        assert_eq!(p(&["-uninstall"]), Ok(Command::Unregister));
     }
 
     #[test]

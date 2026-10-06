@@ -71,7 +71,7 @@ const BINARY: BinaryType = BinaryType::WindowsPlayer;
 
 pub fn http_client() -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
-        .user_agent(concat!("robloxbootstrapper/", env!("CARGO_PKG_VERSION")))
+        .user_agent(concat!("Rusticean/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(15))
         .build()
 }

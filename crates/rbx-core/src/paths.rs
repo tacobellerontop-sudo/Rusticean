@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-pub const APP_NAME: &str = "robloxbootstrapper";
+pub const APP_NAME: &str = "Rusticean";
+/// The data folder's name before the rename to Rusticean.
+const LEGACY_APP_NAME: &str = "robloxbootstrapper";
 
 /// Every directory and file the bootstrapper owns, rooted at one base folder.
 #[derive(Debug, Clone)]
@@ -29,9 +31,24 @@ impl Paths {
         }
     }
 
-    /// `%LOCALAPPDATA%\robloxbootstrapper` on Windows.
+    /// `%LOCALAPPDATA%\Rusticean` on Windows.
     pub fn default_base() -> Option<PathBuf> {
         dirs::data_local_dir().map(|d| d.join(APP_NAME))
+    }
+
+    /// Move data from the pre-rename `%LOCALAPPDATA%\robloxbootstrapper` folder into `base`,
+    /// once, so settings and installed versions carry over.
+    pub fn migrate_legacy(&self) {
+        let Some(legacy) = self.base.parent().map(|p| p.join(LEGACY_APP_NAME)) else {
+            return;
+        };
+        if self.base.exists() || !legacy.is_dir() {
+            return;
+        }
+        match std::fs::rename(&legacy, &self.base) {
+            Ok(()) => tracing::info!(from = %legacy.display(), "moved data to the new folder"),
+            Err(e) => tracing::warn!(error = %e, "could not move the old data folder"),
+        }
     }
 
     pub fn version_dir(&self, version_guid: &str) -> PathBuf {

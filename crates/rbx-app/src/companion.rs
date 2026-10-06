@@ -8,7 +8,7 @@ use rbx_core::Settings;
 use rbx_win::sync::NamedMutexGuard;
 
 /// Only one companion runs at a time; later launches leave the work to it.
-const LOCK: &str = "robloxbootstrapper-companion";
+const LOCK: &str = "Rusticean-companion";
 const POLL: Duration = Duration::from_secs(5);
 /// How long to wait for Roblox to appear before giving up.
 const STARTUP_GRACE: Duration = Duration::from_secs(120);
