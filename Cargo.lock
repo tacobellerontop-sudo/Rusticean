@@ -2533,6 +2533,7 @@ dependencies = [
  "rbx-core",
  "rbx-deploy",
  "rbx-win",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-appender",

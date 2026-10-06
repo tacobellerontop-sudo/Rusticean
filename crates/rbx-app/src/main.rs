@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::Context;
-use rbx_core::{LaunchOptions, Paths, Status, StatusFn};
+use rbx_core::{LaunchOptions, Paths, Settings, Status, StatusFn};
 use rbx_deploy::install::Stage;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
@@ -24,10 +24,10 @@ fn main() {
         }
     };
 
-    let cli::Command::Player(opts) = command else {
+    if command == cli::Command::Help {
         println!("{}", cli::USAGE);
         return;
-    };
+    }
 
     let paths = match Paths::default_base() {
         Some(base) => Paths::new(base),
@@ -41,7 +41,7 @@ fn main() {
     let log_guard = init_logging(&paths);
     std::panic::set_hook(Box::new(|info| tracing::error!("panic: {info}")));
 
-    let result = std::panic::catch_unwind(|| run(&paths, opts))
+    let result = std::panic::catch_unwind(|| run(&paths, command))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("the bootstrapper crashed (see the log)")));
 
     match result {
@@ -65,8 +65,8 @@ fn fail(e: anyhow::Error) -> ! {
 }
 
 /// Returns `Ok(false)` for a failure the window has already shown.
-fn run(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), ?opts, "starting");
+fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), ?command, "starting");
 
     // re-point roblox:// links at this exe on every run, in case the stock launcher took them back
     match std::env::current_exe() {
@@ -78,11 +78,25 @@ fn run(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
         Err(e) => tracing::warn!(error = %e, "could not find our own path"),
     }
 
-    let quiet = opts.quiet;
+    let opts = match command {
+        cli::Command::Player(opts) => opts,
+        cli::Command::Settings => {
+            if !ui::settings::run(paths.clone())? {
+                return Ok(true);
+            }
+            cli::Options::default()
+        }
+        cli::Command::Help => return Ok(true),
+    };
+    launch(paths, opts)
+}
+
+fn launch(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
+    let show_window = !opts.quiet && Settings::load(&paths.settings_file).show_progress_window;
     let opts: LaunchOptions = opts.into();
 
-    if !quiet {
-        match ui::run(paths.clone(), opts.clone()) {
+    if show_window {
+        match ui::bootstrapper::run(paths.clone(), opts.clone()) {
             Ok(success) => return Ok(success),
             Err(e) => tracing::warn!("{e:#}; continuing without a window"),
         }
