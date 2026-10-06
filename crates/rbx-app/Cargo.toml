@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 rbx-core = { version = "0.1.0", path = "../rbx-core" }
 rbx-deploy = { version = "0.1.0", path = "../rbx-deploy" }
 rbx-win = { version = "0.1.0", path = "../rbx-win" }

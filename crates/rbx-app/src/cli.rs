@@ -17,6 +17,8 @@ pub struct Options {
     pub version_guid: Option<String>,
     pub force: bool,
     pub no_launch: bool,
+    /// No window: errors only go to the log and a message box.
+    pub quiet: bool,
 }
 
 impl From<Options> for LaunchOptions {
@@ -65,6 +67,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             }
             "force" => opts.force = true,
             "nolaunch" => opts.no_launch = true,
+            "quiet" => opts.quiet = true,
             "help" | "h" | "?" | "-help" => return Ok(Command::Help),
             other => return Err(format!("unknown flag '-{other}'")),
         }
@@ -88,6 +91,7 @@ FLAGS:
     -version <guid>    Install this exact version (e.g. version-1a2b3c4d5e6f7a8b)
     -force             Reinstall even if the version is already present
     -nolaunch          Install or update, but don't start Roblox
+    -quiet             Don't show the progress window
     -help              Show this message
 ";
 
@@ -121,12 +125,13 @@ mod tests {
             "ZBeta",
             "-force",
             "-nolaunch",
+            "-quiet",
         ]) else {
             panic!()
         };
         assert_eq!(o.launch_args, "roblox-player:1");
         assert_eq!(o.channel.as_deref(), Some("ZBeta"));
-        assert!(o.force && o.no_launch);
+        assert!(o.force && o.no_launch && o.quiet);
     }
 
     #[test]
