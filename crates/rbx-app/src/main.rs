@@ -28,18 +28,34 @@ fn main() {
         return;
     };
 
-    if let Err(e) = run(opts) {
+    let paths = match Paths::default_base() {
+        Some(base) => Paths::new(base),
+        None => fail(anyhow::anyhow!("could not find %LOCALAPPDATA%")),
+    };
+    if let Err(e) = paths.ensure_dirs() {
+        fail(anyhow::Error::new(e).context("creating data folders"));
+    }
+
+    // held for the whole run so the error below still reaches the log file
+    let log_guard = init_logging(&paths);
+    std::panic::set_hook(Box::new(|info| tracing::error!("panic: {info}")));
+
+    let result = std::panic::catch_unwind(|| run(&paths, opts))
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("the bootstrapper crashed (see the log)")));
+
+    if let Err(e) = result {
         tracing::error!("{e:#}");
-        rbx_win::dialog::error(TITLE, &format!("Roblox could not be started.\n\n{e:#}"));
-        std::process::exit(1);
+        drop(log_guard);
+        fail(e);
     }
 }
 
-fn run(opts: cli::Options) -> anyhow::Result<()> {
-    let paths = Paths::new(Paths::default_base().context("could not find %LOCALAPPDATA%")?);
-    paths.ensure_dirs().context("creating data folders")?;
-    let _log_guard = init_logging(&paths);
+fn fail(e: anyhow::Error) -> ! {
+    rbx_win::dialog::error(TITLE, &format!("Roblox could not be started.\n\n{e:#}"));
+    std::process::exit(1);
+}
 
+fn run(paths: &Paths, opts: cli::Options) -> anyhow::Result<()> {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), ?opts, "starting");
 
     // re-point roblox:// links at this exe on every run, in case the stock launcher took them back
@@ -58,7 +74,7 @@ fn run(opts: cli::Options) -> anyhow::Result<()> {
         .context("starting async runtime")?;
 
     runtime
-        .block_on(rbx_core::run(&paths, &opts.into(), progress_logger()))
+        .block_on(rbx_core::run(paths, &opts.into(), progress_logger()))
         .context("bootstrapping Roblox")?;
     Ok(())
 }
@@ -73,7 +89,7 @@ fn progress_logger() -> Arc<dyn Fn(Progress) + Send + Sync> {
                 tracing::info!("downloading: {}%", decile * 10);
             }
         }
-        Stage::Extracting => tracing::info!("extracting packages"),
+        Stage::Extracting { done, total } => tracing::info!("extracting: {done}/{total} packages"),
         Stage::Done => tracing::info!("install finished"),
         _ => {}
     })

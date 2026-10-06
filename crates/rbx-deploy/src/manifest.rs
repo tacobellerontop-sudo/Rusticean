@@ -35,9 +35,10 @@ pub fn parse(data: &str) -> Result<Vec<Package>> {
             break;
         }
 
-        // the stock launcher is listed last and isn't something we install
-        if name == "RobloxPlayerLauncher.exe" {
-            break;
+        // the manifest also lists the stock launcher/installer executables
+        // (RobloxPlayerLauncher.exe, RobloxPlayerInstaller.exe); we only want the zips
+        if !name.to_ascii_lowercase().ends_with(".zip") {
+            continue;
         }
 
         let parse_size = |raw: &str| {
@@ -60,10 +61,10 @@ pub fn parse(data: &str) -> Result<Vec<Package>> {
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = "v0\r\nRobloxApp.zip\r\n0123456789ABCDEF0123456789abcdef\r\n100\r\n250\r\nshaders.zip\r\nfedcba9876543210fedcba9876543210\r\n10\r\n20\r\nRobloxPlayerLauncher.exe\r\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n5\r\n5\r\n";
+    const SAMPLE: &str = "v0\r\nRobloxApp.zip\r\n0123456789ABCDEF0123456789abcdef\r\n100\r\n250\r\nRobloxPlayerInstaller.exe\r\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\r\n7\r\n7\r\nshaders.zip\r\nfedcba9876543210fedcba9876543210\r\n10\r\n20\r\nRobloxPlayerLauncher.exe\r\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\n5\r\n5\r\n";
 
     #[test]
-    fn parses_packages_and_stops_at_launcher() {
+    fn parses_packages_and_skips_executables() {
         let pkgs = parse(SAMPLE).unwrap();
         assert_eq!(pkgs.len(), 2);
         assert_eq!(pkgs[0].name, "RobloxApp.zip");

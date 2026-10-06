@@ -25,8 +25,14 @@ const WEBVIEW2_INSTALLER: &str = "WebView2RuntimeInstaller.zip";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Stage {
-    Downloading { package: String },
-    Extracting,
+    Downloading {
+        package: String,
+    },
+    /// `done` of `total` packages extracted; downloads are finished.
+    Extracting {
+        done: usize,
+        total: usize,
+    },
     Done,
 }
 
@@ -129,20 +135,25 @@ impl InstallJob {
             let dest = self.version_dir.join(subdir);
             let name = package.name.clone();
             extractions.push(tokio::task::spawn_blocking(move || {
+                let started = std::time::Instant::now();
                 extract_zip(&zip_path, &dest).map_err(|message| Error::Extract {
-                    package: name,
+                    package: name.clone(),
                     message,
-                })
+                })?;
+                tracing::info!(package = %name, elapsed = ?started.elapsed(), "extracted");
+                Ok::<_, Error>(())
             }));
         }
 
-        tracker.report(Stage::Extracting);
-        for task in extractions {
+        let total = extractions.len();
+        for (done, task) in extractions.into_iter().enumerate() {
+            tracker.report(Stage::Extracting { done, total });
             task.await.map_err(|e| Error::Extract {
                 package: "?".into(),
                 message: e.to_string(),
             })??;
         }
+        tracker.report(Stage::Extracting { done: total, total });
         self.check_cancel()?;
 
         let settings = self.version_dir.join("AppSettings.xml");
