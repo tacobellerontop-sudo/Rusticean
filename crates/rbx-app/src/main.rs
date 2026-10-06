@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cli;
+mod companion;
 mod ui;
 
 use std::sync::Arc;
@@ -92,9 +93,23 @@ fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
 }
 
 fn launch(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
-    let show_window = !opts.quiet && Settings::load(&paths.settings_file).show_progress_window;
+    let settings = Settings::load(&paths.settings_file);
+    let show_window = !opts.quiet && settings.show_progress_window;
     let opts: LaunchOptions = opts.into();
 
+    // set up before Roblox starts: multi-instance only works if we hold its mutex first
+    let companion = (!opts.no_launch)
+        .then(|| companion::Companion::prepare(&settings))
+        .flatten();
+
+    let success = bootstrap(paths, &opts, show_window)?;
+    if success && let Some(companion) = companion {
+        companion.run();
+    }
+    Ok(success)
+}
+
+fn bootstrap(paths: &Paths, opts: &LaunchOptions, show_window: bool) -> anyhow::Result<bool> {
     if show_window {
         match ui::bootstrapper::run(paths.clone(), opts.clone()) {
             Ok(success) => return Ok(success),
@@ -109,7 +124,7 @@ fn launch(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
     runtime
         .block_on(rbx_core::run(
             paths,
-            &opts,
+            opts,
             status_logger(),
             Arc::new(AtomicBool::new(false)),
         ))

@@ -23,18 +23,29 @@ const REPO_URL: &str = "https://github.com/tacobellerontop-sudo/fictional-garban
 enum Page {
     Launch,
     FastFlags,
+    Mods,
     Storage,
+    Risky,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 4] = [Page::Launch, Page::FastFlags, Page::Storage, Page::About];
+    const ALL: [Page; 6] = [
+        Page::Launch,
+        Page::FastFlags,
+        Page::Mods,
+        Page::Storage,
+        Page::Risky,
+        Page::About,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Page::Launch => "Launch",
             Page::FastFlags => "FastFlags",
+            Page::Mods => "Mods",
             Page::Storage => "Storage",
+            Page::Risky => "Risky",
             Page::About => "About",
         }
     }
@@ -164,7 +175,9 @@ impl SettingsApp {
                     .show(ui, |ui| match self.page {
                         Page::Launch => self.launch_page(ui),
                         Page::FastFlags => self.fast_flags_page(ui),
+                        Page::Mods => self.mods_page(ui),
                         Page::Storage => self.storage_page(ui),
+                        Page::Risky => self.risky_page(ui),
                         Page::About => self.about_page(ui),
                     });
             });
@@ -223,7 +236,11 @@ impl SettingsApp {
                 } else {
                     egui::FontId::proportional(14.0)
                 },
-                if selected { TEXT } else { TEXT_DIM },
+                match (page, selected) {
+                    (Page::Risky, _) => RED,
+                    (_, true) => TEXT,
+                    _ => TEXT_DIM,
+                },
             );
             if resp
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -295,6 +312,15 @@ impl SettingsApp {
                         &ProcessPriority::ALL,
                         ProcessPriority::label,
                     );
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Disable fullscreen optimizations",
+                "Windows' compatibility option for RobloxPlayerBeta.exe. Can lower input lag in fullscreen.",
+                |ui| {
+                    toggle(ui, &mut self.settings.disable_fullscreen_optimizations);
                 },
             );
         });
@@ -516,6 +542,118 @@ impl SettingsApp {
                         .desired_width(f32::INFINITY),
                 );
             });
+    }
+
+    fn mods_page(&mut self, ui: &mut egui::Ui) {
+        page_header(
+            ui,
+            "Mods",
+            "Replace Roblox's sounds, textures, fonts and cursors with your own files.",
+        );
+
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Modifications folder",
+                "Files here are copied over Roblox every time it launches. Delete a file to undo it.",
+                |ui| {
+                    if ui.button("Open folder").clicked() {
+                        let _ = std::fs::create_dir_all(&self.paths.modifications);
+                        open_path(&self.paths.modifications);
+                    }
+                },
+            );
+        });
+
+        ui.label(RichText::new("How it works").font(bold(15.0)).color(TEXT));
+        ui.add_space(4.0);
+        card(ui, |ui| {
+            ui.label(
+                RichText::new(
+                    "Put files at the same path they have inside the Roblox install. For example:",
+                )
+                .size(12.5)
+                .color(TEXT_DIM),
+            );
+            ui.add_space(6.0);
+            for (path, what) in [
+                ("content/sounds/ouch.ogg", "death sound"),
+                ("content/fonts/", "fonts"),
+                ("content/textures/Cursors/KeyboardMouse/", "mouse cursors"),
+                ("PlatformContent/pc/textures/", "textures"),
+            ] {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(path).monospace().color(BLUE_LIGHT));
+                    ui.label(RichText::new(what).size(12.5).color(TEXT_DIM));
+                });
+            }
+        });
+    }
+
+    fn risky_page(&mut self, ui: &mut egui::Ui) {
+        page_header(
+            ui,
+            "Risky",
+            "Features from other bootstrappers that Roblox may not allow.",
+        );
+
+        egui::Frame::new()
+            .fill(Color32::from_rgb(0x3A, 0x1F, 0x22))
+            .stroke(egui::Stroke::new(1.0, RED))
+            .corner_radius(CornerRadius::same(10))
+            .inner_margin(egui::Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(
+                    RichText::new("Use at your own risk")
+                        .font(bold(14.5))
+                        .color(RED),
+                );
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(
+                            "These can break Roblox's rules and may get your account warned or \
+                             banned. They're off unless you turn them on.",
+                        )
+                        .size(12.5)
+                        .color(TEXT),
+                    )
+                    .wrap(),
+                );
+            });
+        ui.add_space(10.0);
+
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Multiple Roblox windows",
+                "Run several Roblox clients at once instead of each launch closing the last. \
+                 Keeps a small background helper running until they're all closed.",
+                |ui| {
+                    toggle(ui, &mut self.settings.multi_instance);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Anti-AFK",
+                "Every 15 minutes while you're away from Roblox, briefly switch to it and press \
+                 Space so you don't get kicked for being idle.",
+                |ui| {
+                    toggle(ui, &mut self.settings.anti_afk);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Fullbright",
+                "Remove the lighting texture so dark areas render fully lit. \
+                 Can count as an unfair advantage.",
+                |ui| {
+                    toggle(ui, &mut self.settings.fullbright);
+                },
+            );
+        });
     }
 
     fn storage_page(&mut self, ui: &mut egui::Ui) {

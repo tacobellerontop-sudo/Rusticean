@@ -10,6 +10,7 @@ use rbx_deploy::{BinaryType, cdn, manifest, reqwest, version};
 
 use crate::channel;
 use crate::cleanup;
+use crate::mods;
 use crate::paths::{APP_NAME, Paths};
 use crate::settings::{self, ProcessPriority, Settings};
 use crate::state::State;
@@ -191,6 +192,22 @@ pub async fn run(
     // FastFlags are rewritten every launch so settings changes apply without a reinstall
     settings::write_client_settings(&version_dir, &settings.effective_fast_flags())
         .map_err(io_err("writing ClientAppSettings.json"))?;
+
+    // a broken mod shouldn't stop the game from starting
+    match mods::apply(&paths.modifications, &version_dir) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(files = n, "applied modifications"),
+        Err(e) => tracing::warn!(error = %e, "could not apply modifications"),
+    }
+    if let Err(e) = mods::set_fullbright(&version_dir, settings.fullbright) {
+        tracing::warn!(error = %e, "could not change fullbright");
+    }
+    if let Err(e) = rbx_win::registry::set_fullscreen_optimizations(
+        &exe,
+        !settings.disable_fullscreen_optimizations,
+    ) {
+        tracing::warn!(error = %e, "could not set fullscreen optimizations");
+    }
 
     if !opts.no_launch {
         check_cancel()?;
