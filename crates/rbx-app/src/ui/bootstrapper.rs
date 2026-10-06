@@ -1,35 +1,23 @@
 //! The bootstrapper window: a small dark dialog in Roblox's style that shows what's
 //! happening while Roblox is installed and started, and any error that stops it.
 
-use std::f32::consts::{FRAC_PI_2, TAU};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align, Align2, Color32, CornerRadius, FontFamily, FontId, Layout, Pos2, Rect, RichText,
-    Sense, Shape, Stroke, StrokeKind, Vec2, ViewportCommand,
+    self, Align, Align2, Color32, CornerRadius, FontId, Layout, Pos2, Rect, RichText, Sense, Shape,
+    Stroke, StrokeKind, Vec2, ViewportCommand,
 };
 use rbx_core::{LaunchOptions, Paths, Status};
+
+use super::theme::*;
 use rbx_deploy::install::Stage;
 
 const WINDOW_SIZE: Vec2 = Vec2::new(460.0, 290.0);
 
-// Roblox's dark theme
-const BG: Color32 = Color32::from_rgb(0x19, 0x1B, 0x1D);
-const SURFACE: Color32 = Color32::from_rgb(0x23, 0x25, 0x27);
-const BORDER: Color32 = Color32::from_rgb(0x39, 0x3B, 0x3D);
-const TEXT: Color32 = Color32::from_rgb(0xF7, 0xF7, 0xF8);
-const TEXT_DIM: Color32 = Color32::from_rgb(0xBD, 0xBE, 0xBE);
-const BLUE: Color32 = Color32::from_rgb(0x33, 0x5F, 0xFF);
-const BLUE_LIGHT: Color32 = Color32::from_rgb(0x6E, 0x8C, 0xFF);
-const RED: Color32 = Color32::from_rgb(0xE5, 0x48, 0x4D);
-
 /// How long "Have fun!" stays up after Roblox starts.
 const FINISH_LINGER: Duration = Duration::from_millis(900);
-
-/// Bold text uses this family when a bold system font is available.
-const BOLD: &str = "bold";
 
 #[derive(Default)]
 struct Shared {
@@ -423,15 +411,6 @@ fn logo(ui: &mut egui::Ui, t: f32, finished: bool) {
     }
 }
 
-fn square(center: Pos2, half: f32, angle: f32) -> Vec<Pos2> {
-    (0..4)
-        .map(|i| {
-            let a = angle + FRAC_PI_2 * i as f32 + TAU / 8.0;
-            center + Vec2::angled(a) * half * std::f32::consts::SQRT_2
-        })
-        .collect()
-}
-
 fn progress_bar(ui: &mut egui::Ui, fraction: Option<f32>, t: f32) {
     let (rect, _) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().min(340.0), 6.0),
@@ -458,126 +437,6 @@ fn progress_bar(ui: &mut egui::Ui, fraction: Option<f32>, t: f32) {
                 Rect::from_min_size(Pos2::new(left, rect.top()), Vec2::new(width, rect.height()));
             painter.rect_filled(seg, radius, BLUE_LIGHT);
         }
-    }
-}
-
-fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    styled_button(ui, text, BLUE, Color32::WHITE, Stroke::NONE)
-}
-
-fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    styled_button(
-        ui,
-        text,
-        Color32::TRANSPARENT,
-        TEXT,
-        Stroke::new(1.0, BORDER),
-    )
-}
-
-fn styled_button(
-    ui: &mut egui::Ui,
-    text: &str,
-    fill: Color32,
-    color: Color32,
-    stroke: Stroke,
-) -> egui::Response {
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(120.0, 34.0), Sense::click());
-    let fill = if resp.hovered() {
-        if fill == Color32::TRANSPARENT {
-            SURFACE
-        } else {
-            BLUE_LIGHT
-        }
-    } else {
-        fill
-    };
-    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
-    ui.painter()
-        .rect_stroke(rect, CornerRadius::same(8), stroke, StrokeKind::Inside);
-    ui.painter().text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        text,
-        bold(14.0),
-        color,
-    );
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
-}
-
-fn bold(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name(BOLD.into()))
-}
-
-/// Use Segoe UI from Windows when present (closest to Roblox's own UI); egui's bundled
-/// font otherwise.
-fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    let windows_fonts = std::env::var_os("WINDIR")
-        .map(|w| std::path::PathBuf::from(w).join("Fonts"))
-        .unwrap_or_default();
-
-    let mut load = |key: &str, file: &str| -> bool {
-        match std::fs::read(windows_fonts.join(file)) {
-            Ok(bytes) => {
-                fonts
-                    .font_data
-                    .insert(key.to_owned(), Arc::new(egui::FontData::from_owned(bytes)));
-                true
-            }
-            Err(_) => false,
-        }
-    };
-    let regular = load("segoe", "segoeui.ttf");
-    let semibold = load("segoe-semibold", "seguisb.ttf");
-
-    if regular {
-        fonts
-            .families
-            .entry(FontFamily::Proportional)
-            .or_default()
-            .insert(0, "segoe".into());
-    }
-
-    let fallback = fonts
-        .families
-        .get(&FontFamily::Proportional)
-        .cloned()
-        .unwrap_or_default();
-    let mut bold_family = Vec::new();
-    if semibold {
-        bold_family.push("segoe-semibold".to_owned());
-    }
-    bold_family.extend(fallback);
-    fonts
-        .families
-        .insert(FontFamily::Name(BOLD.into()), bold_family);
-
-    ctx.set_fonts(fonts);
-}
-
-/// The logo drawn into a 64×64 icon for the taskbar.
-fn app_icon() -> egui::IconData {
-    const N: usize = 64;
-    let mut rgba = vec![0u8; N * N * 4];
-    let c = (N as f32 - 1.0) / 2.0;
-    let (sin, cos) = 0.26f32.sin_cos();
-    for y in 0..N {
-        for x in 0..N {
-            let (dx, dy) = (x as f32 - c, y as f32 - c);
-            // rotate into the square's frame
-            let (u, v) = (dx * cos + dy * sin, -dx * sin + dy * cos);
-            let m = u.abs().max(v.abs());
-            if m <= 26.0 && m > 11.0 {
-                let i = (y * N + x) * 4;
-                rgba[i..i + 4].copy_from_slice(&[0x33, 0x5F, 0xFF, 0xFF]);
-            }
-        }
-    }
-    egui::IconData {
-        rgba,
-        width: N as u32,
-        height: N as u32,
     }
 }
 

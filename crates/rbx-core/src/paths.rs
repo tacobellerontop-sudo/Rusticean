@@ -10,6 +10,7 @@ pub struct Paths {
     pub versions: PathBuf,
     pub logs: PathBuf,
     pub state_file: PathBuf,
+    pub settings_file: PathBuf,
 }
 
 impl Paths {
@@ -20,6 +21,7 @@ impl Paths {
             versions: base.join("Versions"),
             logs: base.join("Logs"),
             state_file: base.join("State.json"),
+            settings_file: base.join("Settings.json"),
             base,
         }
     }

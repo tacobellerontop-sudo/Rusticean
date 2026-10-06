@@ -10,6 +10,7 @@ use rbx_deploy::{BinaryType, cdn, manifest, reqwest, version};
 
 use crate::channel;
 use crate::paths::{APP_NAME, Paths};
+use crate::settings::{self, Settings};
 use crate::state::State;
 
 #[derive(Debug, thiserror::Error)]
@@ -104,6 +105,7 @@ pub async fn run(
 
     // state may have changed while we waited for another instance
     let mut state = State::load(&paths.state_file);
+    let settings = Settings::load(&paths.settings_file);
     let client = http_client().map_err(rbx_deploy::Error::from)?;
     let mirror = cdn::find_mirror(&client).await?;
     check_cancel()?;
@@ -115,7 +117,7 @@ pub async fn run(
             tracing::info!(%guid, "version set from arguments");
             guid.clone()
         }
-        None => latest_version_guid(&client, opts).await?,
+        None => latest_version_guid(&client, opts, &settings).await?,
     };
 
     let version_dir = paths.version_dir(&version_guid);
@@ -170,6 +172,10 @@ pub async fn run(
         tracing::info!(%version_guid, "already up to date");
     }
 
+    // FastFlags are rewritten every launch so settings changes apply without a reinstall
+    settings::write_client_settings(&version_dir, &settings.effective_fast_flags())
+        .map_err(io_err("writing ClientAppSettings.json"))?;
+
     if !opts.no_launch {
         check_cancel()?;
         on_status(Status::Starting);
@@ -182,9 +188,10 @@ pub async fn run(
 async fn latest_version_guid(
     client: &reqwest::Client,
     opts: &LaunchOptions,
+    settings: &Settings,
 ) -> Result<String, Error> {
     let mut channel = channel::resolve(
-        opts.channel.as_deref(),
+        opts.channel.as_deref().or(settings.channel.as_deref()),
         &opts.launch_args,
         rbx_win::registry::read_channel(BINARY.registry_name()),
     );
