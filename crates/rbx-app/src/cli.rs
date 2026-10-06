@@ -13,6 +13,8 @@ pub enum Command {
     Register,
     /// Undo `Register` (run by the uninstaller).
     Unregister,
+    /// Show the progress window with a fake install (settings' Preview button).
+    Preview,
     Help,
 }
 
@@ -70,6 +72,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             "settings" | "menu" | "preferences" => return Ok(Command::Settings),
             "register" => return Ok(Command::Register),
             "unregister" | "uninstall" => return Ok(Command::Unregister),
+            "preview" => return Ok(Command::Preview),
             _ => {}
         }
         any_player_arg = true;

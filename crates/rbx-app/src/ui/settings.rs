@@ -6,34 +6,38 @@ use std::time::{Duration, Instant};
 use eframe::egui::{self, Align, Color32, CornerRadius, Layout, RichText, Sense, Vec2};
 use rbx_core::cleanup;
 use rbx_core::settings::{
-    CleanupAge, Msaa, ProcessPriority, RenderingApi, TextureQuality, parse_flag_value,
+    BootstrapperIcon, BootstrapperStyle, CleanupAge, CursorStyle, CustomIntegration, EmojiStyle,
+    Msaa, ProcessPriority, RenderingApi, TextureQuality, Theme, parse_flag_value,
 };
 use rbx_core::state::State;
 use rbx_core::{Paths, Settings};
 
 use super::theme::*;
 
-const WINDOW_SIZE: Vec2 = Vec2::new(760.0, 520.0);
+const WINDOW_SIZE: Vec2 = Vec2::new(780.0, 580.0);
 const SIDEBAR_WIDTH: f32 = 200.0;
 const TITLE_BAR_HEIGHT: f32 = 36.0;
-const TITLE_BAR_BG: Color32 = Color32::from_rgb(0x12, 0x13, 0x15);
 const REPO_URL: &str = "https://github.com/tacobellerontop-sudo/fictional-garbanzo";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Launch,
-    FastFlags,
+    Integrations,
     Mods,
+    Engine,
+    Appearance,
     Storage,
     Risky,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 6] = [
+    const ALL: [Page; 8] = [
         Page::Launch,
-        Page::FastFlags,
+        Page::Integrations,
         Page::Mods,
+        Page::Engine,
+        Page::Appearance,
         Page::Storage,
         Page::Risky,
         Page::About,
@@ -42,8 +46,10 @@ impl Page {
     fn label(self) -> &'static str {
         match self {
             Page::Launch => "Launch",
-            Page::FastFlags => "FastFlags",
+            Page::Integrations => "Integrations",
             Page::Mods => "Mods",
+            Page::Engine => "Engine",
+            Page::Appearance => "Appearance",
             Page::Storage => "Storage",
             Page::Risky => "Risky",
             Page::About => "About",
@@ -64,6 +70,12 @@ struct SettingsApp {
     reinstall_requested: bool,
     /// Result of the last "Clean now".
     cleaned: Option<cleanup::Report>,
+    /// The theme the window is drawn with, to notice when the setting changes.
+    shown_theme: Theme,
+    /// "Reset everything" was clicked once and waits for a second click.
+    confirm_reset: bool,
+    /// Why the last font or icon file couldn't be used.
+    file_error: Option<String>,
     launch_requested: bool,
 }
 
@@ -89,6 +101,8 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
         options,
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx);
+            let theme = settings.theme;
+            set_light(wants_light(theme));
             apply_visuals(&cc.egui_ctx);
             Ok(Box::new(Wrapper {
                 app: SettingsApp {
@@ -102,6 +116,9 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
                     new_flag_value: String::new(),
                     reinstall_requested: false,
                     cleaned: None,
+                    shown_theme: theme,
+                    confirm_reset: false,
+                    file_error: None,
                     launch_requested: false,
                 },
                 launch: launch_flag,
@@ -130,7 +147,7 @@ impl eframe::App for Wrapper {
     }
 
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        egui::Rgba::from(BG).to_array()
+        egui::Rgba::from(bg()).to_array()
     }
 }
 
@@ -140,7 +157,7 @@ impl SettingsApp {
 
         egui::Panel::top("title_bar")
             .exact_size(TITLE_BAR_HEIGHT)
-            .frame(egui::Frame::new().fill(TITLE_BAR_BG))
+            .frame(egui::Frame::new().fill(palette().deep))
             .show(ui, |ui| {
                 let bar = ui.max_rect();
                 match title_bar(ui, bar, "Settings", true) {
@@ -153,20 +170,20 @@ impl SettingsApp {
                 ui.painter().hline(
                     bar.x_range(),
                     bar.bottom() - 0.5,
-                    egui::Stroke::new(1.0, BORDER),
+                    egui::Stroke::new(1.0, border()),
                 );
             });
 
         egui::Panel::left("sidebar")
             .exact_size(SIDEBAR_WIDTH)
             .resizable(false)
-            .frame(egui::Frame::new().fill(SURFACE).inner_margin(16))
+            .frame(egui::Frame::new().fill(surface()).inner_margin(16))
             .show(ui, |ui| self.sidebar(ui));
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(BG)
+                    .fill(bg())
                     .inner_margin(egui::Margin::symmetric(28, 22)),
             )
             .show(ui, |ui| {
@@ -174,8 +191,10 @@ impl SettingsApp {
                     .auto_shrink([false, false])
                     .show(ui, |ui| match self.page {
                         Page::Launch => self.launch_page(ui),
-                        Page::FastFlags => self.fast_flags_page(ui),
+                        Page::Integrations => self.integrations_page(ui),
                         Page::Mods => self.mods_page(ui),
+                        Page::Engine => self.fast_flags_page(ui),
+                        Page::Appearance => self.appearance_page(ui),
                         Page::Storage => self.storage_page(ui),
                         Page::Risky => self.risky_page(ui),
                         Page::About => self.about_page(ui),
@@ -191,18 +210,24 @@ impl SettingsApp {
             .rect_stroke(
                 window,
                 CornerRadius::ZERO,
-                egui::Stroke::new(1.0, BORDER),
+                egui::Stroke::new(1.0, border()),
                 egui::StrokeKind::Inside,
             );
 
         self.autosave();
+
+        if self.settings.theme != self.shown_theme {
+            self.shown_theme = self.settings.theme;
+            set_light(wants_light(self.shown_theme));
+            apply_visuals(ui.ctx());
+        }
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
-            draw_mark(ui.painter(), rect.center(), 11.0, SURFACE);
-            ui.label(RichText::new("Rusticean").font(bold(14.5)).color(TEXT));
+            draw_mark(ui.painter(), rect.center(), 11.0, surface());
+            ui.label(RichText::new("Rusticean").font(bold(14.5)).color(text()));
         });
         ui.add_space(18.0);
 
@@ -211,9 +236,9 @@ impl SettingsApp {
             let (rect, resp) =
                 ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
             let fill = if selected {
-                Color32::from_rgb(0x2E, 0x33, 0x45)
+                palette().selected
             } else if resp.hovered() {
-                Color32::from_rgb(0x2B, 0x2D, 0x30)
+                palette().hover
             } else {
                 Color32::TRANSPARENT
             };
@@ -221,7 +246,7 @@ impl SettingsApp {
             if selected {
                 let bar =
                     egui::Rect::from_min_size(rect.min + Vec2::new(0.0, 8.0), Vec2::new(3.0, 18.0));
-                ui.painter().rect_filled(bar, CornerRadius::same(2), BLUE);
+                ui.painter().rect_filled(bar, CornerRadius::same(2), blue());
             }
             ui.painter().text(
                 rect.left_center() + Vec2::new(14.0, 0.0),
@@ -233,9 +258,9 @@ impl SettingsApp {
                     egui::FontId::proportional(14.0)
                 },
                 match (page, selected) {
-                    (Page::Risky, _) => RED,
-                    (_, true) => TEXT,
-                    _ => TEXT_DIM,
+                    (Page::Risky, _) => red(),
+                    (_, true) => text(),
+                    _ => text_dim(),
                 },
             );
             if resp
@@ -252,18 +277,18 @@ impl SettingsApp {
                     ui.label(
                         RichText::new(format!("Couldn't save: {e}"))
                             .size(11.5)
-                            .color(RED),
+                            .color(red()),
                     );
                 }
                 Some((at, Ok(()))) if at.elapsed() < Duration::from_secs(2) => {
-                    ui.label(RichText::new("Saved").size(12.0).color(TEXT_DIM));
+                    ui.label(RichText::new("Saved").size(12.0).color(text_dim()));
                     ui.ctx().request_repaint_after(Duration::from_millis(250));
                 }
                 _ => {
                     ui.label(
                         RichText::new("Changes save automatically")
                             .size(11.5)
-                            .color(TEXT_DIM),
+                            .color(text_dim()),
                     );
                 }
             }
@@ -310,15 +335,6 @@ impl SettingsApp {
                     );
                 },
             );
-            ui.separator();
-            setting_row(
-                ui,
-                "Disable fullscreen optimizations",
-                "Windows' compatibility option for RobloxPlayerBeta.exe. Can lower input lag in fullscreen.",
-                |ui| {
-                    toggle(ui, &mut self.settings.disable_fullscreen_optimizations);
-                },
-            );
         });
 
         card(ui, |ui| {
@@ -338,7 +354,7 @@ impl SettingsApp {
                 ui.label(
                     RichText::new("Turn this back on if Roblox says it needs an update.")
                         .size(12.0)
-                        .color(RED),
+                        .color(red()),
                 );
             }
         });
@@ -365,9 +381,20 @@ impl SettingsApp {
     fn fast_flags_page(&mut self, ui: &mut egui::Ui) {
         page_header(
             ui,
-            "FastFlags",
-            "Tweak Roblox's engine settings. Applied every time Roblox launches.",
+            "Engine settings",
+            "Tweak Roblox's engine with FastFlags. Applied every time Roblox launches.",
         );
+
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Let Rusticean manage FastFlags",
+                "Turn off to leave Roblox's ClientAppSettings.json alone; nothing on this page is applied then.",
+                |ui| {
+                    toggle(ui, &mut self.settings.manage_fast_flags);
+                },
+            );
+        });
 
         card(ui, |ui| {
             setting_row(
@@ -449,6 +476,15 @@ impl SettingsApp {
             ui.separator();
             setting_row(
                 ui,
+                "Preserve rendering quality with display scaling",
+                "Roblox lowers its resolution when Windows display scaling is above 100%. This keeps it sharp.",
+                |ui| {
+                    toggle(ui, &mut self.settings.preserve_rendering_quality);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
                 "Remove grass",
                 "Stop drawing grass on terrain, which helps on slower PCs.",
                 |ui| {
@@ -467,25 +503,25 @@ impl SettingsApp {
         });
 
         ui.add_space(4.0);
-        ui.label(RichText::new("Custom flags").font(bold(15.0)).color(TEXT));
+        ui.label(RichText::new("Custom flags").font(bold(15.0)).color(text()));
         ui.label(
             RichText::new(
                 "Roblox only honours flags on its approved list; anything else is ignored. \
                  Values can be true, false, a whole number or text.",
             )
             .size(12.0)
-            .color(TEXT_DIM),
+            .color(text_dim()),
         );
         ui.add_space(4.0);
 
         card(ui, |ui| {
             let mut remove = None;
             if self.settings.fast_flags.is_empty() {
-                ui.label(RichText::new("No custom flags yet.").color(TEXT_DIM));
+                ui.label(RichText::new("No custom flags yet.").color(text_dim()));
             }
             for (name, value) in &self.settings.fast_flags {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(name).monospace().color(TEXT));
+                    ui.label(RichText::new(name).monospace().color(text()));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if remove_button(ui).on_hover_text("Remove").clicked() {
                             remove = Some(name.clone());
@@ -493,7 +529,7 @@ impl SettingsApp {
                         ui.label(
                             RichText::new(value.to_string())
                                 .monospace()
-                                .color(BLUE_LIGHT),
+                                .color(blue_light()),
                         );
                     });
                 });
@@ -526,7 +562,7 @@ impl SettingsApp {
             });
         });
 
-        egui::CollapsingHeader::new(RichText::new("What Roblox will see").color(TEXT_DIM))
+        egui::CollapsingHeader::new(RichText::new("What Roblox will see").color(text_dim()))
             .id_salt("preview")
             .show(ui, |ui| {
                 let json = serde_json::to_string_pretty(&self.settings.effective_fast_flags())
@@ -538,6 +574,280 @@ impl SettingsApp {
                         .desired_width(f32::INFINITY),
                 );
             });
+
+        ui.add_space(10.0);
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Reset everything to defaults",
+                if self.confirm_reset {
+                    "Click again to confirm. All settings on every page go back to how they started."
+                } else {
+                    "Every setting on every page, not just FastFlags. Your mods folder is kept."
+                },
+                |ui| {
+                    let label = if self.confirm_reset {
+                        "Confirm reset"
+                    } else {
+                        "Reset"
+                    };
+                    if ui.button(label).clicked() {
+                        if self.confirm_reset {
+                            self.settings = Settings::default();
+                            self.channel_text.clear();
+                        }
+                        self.confirm_reset = !self.confirm_reset;
+                    }
+                },
+            );
+        });
+    }
+
+    fn integrations_page(&mut self, ui: &mut egui::Ui) {
+        page_header(
+            ui,
+            "Integrations",
+            "Extra features that run alongside Roblox while it's open.",
+        );
+
+        section(ui, "Activity tracking");
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Enable activity tracking",
+                "Lets Rusticean see which game you're in by reading Roblox's log. The options below need it.",
+                |ui| {
+                    toggle(ui, &mut self.settings.activity_tracking);
+                },
+            );
+            let tracking = self.settings.activity_tracking;
+            ui.add_enabled_ui(tracking, |ui| {
+                ui.separator();
+                setting_row(
+                    ui,
+                    "Show server location",
+                    "When you join a game, a notification shows where its server is (looked up on ipinfo.io).",
+                    |ui| {
+                        toggle(ui, &mut self.settings.server_location);
+                    },
+                );
+                ui.separator();
+                setting_row(
+                    ui,
+                    "Don't go back to the desktop app",
+                    "Roblox closes when you leave a game instead of returning to its home screen.",
+                    |ui| {
+                        toggle(ui, &mut self.settings.close_on_leave);
+                    },
+                );
+            });
+        });
+
+        section(ui, "Discord Rich Presence");
+        hint(
+            ui,
+            "Needs activity tracking and the Discord desktop app running.",
+        );
+        card(ui, |ui| {
+            ui.add_enabled_ui(self.settings.activity_tracking, |ui| {
+                setting_row(
+                    ui,
+                    "Show game activity",
+                    "The game you're playing shows on your Discord profile.",
+                    |ui| {
+                        toggle(ui, &mut self.settings.discord_presence);
+                    },
+                );
+                ui.add_enabled_ui(self.settings.discord_presence, |ui| {
+                    ui.separator();
+                    setting_row(
+                        ui,
+                        "Allow activity joining",
+                        "Adds a \"Join server\" button so anyone can join your server from your profile.",
+                        |ui| {
+                            toggle(ui, &mut self.settings.discord_join_button);
+                        },
+                    );
+                    ui.separator();
+                    setting_row(
+                        ui,
+                        "Show Roblox account",
+                        "Shows the Roblox account you're playing on.",
+                        |ui| {
+                            toggle(ui, &mut self.settings.discord_show_account);
+                        },
+                    );
+                });
+            });
+        });
+
+        section(ui, "Custom integrations");
+        hint(ui, "Start other programs with Roblox automatically.");
+        let mut remove = None;
+        for (i, integration) in self.settings.custom_integrations.iter_mut().enumerate() {
+            card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut integration.name)
+                            .hint_text("Name")
+                            .desired_width(ui.available_width() - 40.0),
+                    );
+                    if remove_button(ui).on_hover_text("Remove").clicked() {
+                        remove = Some(i);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut integration.path)
+                            .hint_text(r"C:\path\to\program.exe")
+                            .desired_width(ui.available_width() - 90.0),
+                    );
+                    if ui.button("Browse…").clicked()
+                        && let Some(path) = pick_file("Programs", &["exe", "bat", "cmd"])
+                    {
+                        integration.path = path.display().to_string();
+                        if integration.name.trim().is_empty() {
+                            integration.name = path
+                                .file_stem()
+                                .map(|n| n.to_string_lossy().into_owned())
+                                .unwrap_or_default();
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut integration.args)
+                            .hint_text("Launch arguments (optional)")
+                            .desired_width(ui.available_width() - 190.0),
+                    );
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        toggle(ui, &mut integration.auto_close);
+                        ui.label(
+                            RichText::new("Close with Roblox")
+                                .size(12.5)
+                                .color(text_dim()),
+                        );
+                    });
+                });
+            });
+        }
+        if let Some(i) = remove {
+            self.settings.custom_integrations.remove(i);
+        }
+        if ui.button("Add integration").clicked() {
+            self.settings.custom_integrations.push(CustomIntegration {
+                auto_close: true,
+                ..CustomIntegration::default()
+            });
+        }
+    }
+
+    fn appearance_page(&mut self, ui: &mut egui::Ui) {
+        page_header(ui, "Appearance", "How Rusticean looks.");
+
+        card(ui, |ui| {
+            setting_row(ui, "Theme", "Rusticean's colours.", |ui| {
+                combo(
+                    ui,
+                    "theme",
+                    &mut self.settings.theme,
+                    Theme::ALL,
+                    Theme::label,
+                );
+            });
+        });
+
+        ui.horizontal(|ui| {
+            section(ui, "Progress window");
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Preview").clicked() {
+                    // a second window needs its own process (one event loop per process)
+                    match std::env::current_exe() {
+                        Ok(exe) => {
+                            if let Err(e) = std::process::Command::new(exe).arg("-preview").spawn()
+                            {
+                                tracing::warn!(error = %e, "could not start the preview");
+                            }
+                        }
+                        Err(e) => tracing::warn!(error = %e, "could not find our own path"),
+                    }
+                }
+            });
+        });
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Style",
+                "The window shown while Roblox is downloaded and started.",
+                |ui| {
+                    combo(
+                        ui,
+                        "style",
+                        &mut self.settings.bootstrapper_style,
+                        BootstrapperStyle::ALL,
+                        BootstrapperStyle::label,
+                    );
+                },
+            );
+            ui.separator();
+            setting_row(ui, "Icon", "The logo in the progress window.", |ui| {
+                combo(
+                    ui,
+                    "icon",
+                    &mut self.settings.bootstrapper_icon,
+                    BootstrapperIcon::ALL,
+                    BootstrapperIcon::label,
+                );
+            });
+            if self.settings.bootstrapper_icon == BootstrapperIcon::Custom {
+                ui.horizontal(|ui| {
+                    let current = self
+                        .settings
+                        .custom_icon
+                        .clone()
+                        .unwrap_or_else(|| "No image chosen".to_owned());
+                    ui.label(RichText::new(current).size(12.5).color(text_dim()));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.button("Browse…").clicked()
+                            && let Some(path) = pick_file("Images", &["png", "ico"])
+                        {
+                            let path = path.display().to_string();
+                            match super::bootstrapper::load_image(&path) {
+                                Ok(_) => {
+                                    self.settings.custom_icon = Some(path);
+                                    self.file_error = None;
+                                }
+                                Err(e) => self.file_error = Some(e.to_string()),
+                            }
+                        }
+                    });
+                });
+                if let Some(e) = &self.file_error {
+                    ui.label(
+                        RichText::new(format!("Couldn't use that image: {e}"))
+                            .size(12.0)
+                            .color(red()),
+                    );
+                }
+            }
+            ui.separator();
+            setting_row(
+                ui,
+                "Title",
+                "The text in the progress window's title bar.",
+                |ui| {
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.settings.bootstrapper_title)
+                            .hint_text("Rusticean")
+                            .desired_width(180.0),
+                    );
+                },
+            );
+        });
+        hint(
+            ui,
+            "Rusticean is English only for now, so there's no language setting yet.",
+        );
     }
 
     fn mods_page(&mut self, ui: &mut egui::Ui) {
@@ -561,7 +871,104 @@ impl SettingsApp {
             );
         });
 
-        ui.label(RichText::new("How it works").font(bold(15.0)).color(TEXT));
+        section(ui, "Presets");
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Mouse cursor",
+                "Bring back one of Roblox's classic cursors.",
+                |ui| {
+                    combo(
+                        ui,
+                        "cursor",
+                        &mut self.settings.cursor,
+                        CursorStyle::ALL,
+                        CursorStyle::label,
+                    );
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Old avatar editor background",
+                "The avatar editor background Roblox used before 2020.",
+                |ui| {
+                    toggle(ui, &mut self.settings.old_avatar_background);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Old character sounds",
+                "Roughly bring back the walking, jumping and getting-up sounds from before 2014.",
+                |ui| {
+                    toggle(ui, &mut self.settings.old_character_sounds);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Emoji style",
+                "Which emoji font Roblox uses. Downloaded once from GitHub.",
+                |ui| {
+                    combo(
+                        ui,
+                        "emoji",
+                        &mut self.settings.emoji,
+                        EmojiStyle::ALL,
+                        EmojiStyle::label,
+                    );
+                },
+            );
+            ui.separator();
+            let font_description = match (&self.file_error, &self.settings.custom_font) {
+                (Some(e), _) => format!("Couldn't use that file: {e}"),
+                (None, Some(name)) => format!("Using {name} for all of Roblox's text."),
+                (None, None) => "Replace every font in Roblox with a .ttf or .otf file.".to_owned(),
+            };
+            setting_row(ui, "Custom font", &font_description, |ui| {
+                if self.settings.custom_font.is_some() && ui.button("Remove").clicked() {
+                    let _ = std::fs::remove_file(&self.paths.custom_font);
+                    self.settings.custom_font = None;
+                    self.file_error = None;
+                }
+                if ui.button("Choose font…").clicked()
+                    && let Some(path) = pick_file("Fonts", &["ttf", "otf"])
+                {
+                    match std::fs::copy(&path, &self.paths.custom_font) {
+                        Ok(_) => {
+                            self.settings.custom_font =
+                                path.file_name().map(|n| n.to_string_lossy().into_owned());
+                            self.file_error = None;
+                        }
+                        Err(e) => self.file_error = Some(e.to_string()),
+                    }
+                }
+            });
+        });
+
+        section(ui, "Compatibility");
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Disable fullscreen optimizations",
+                "Windows' compatibility option for Roblox. Can lower input lag in fullscreen.",
+                |ui| {
+                    toggle(ui, &mut self.settings.disable_fullscreen_optimizations);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Override high DPI scaling",
+                "Let Roblox handle display scaling itself instead of Windows stretching it.",
+                |ui| {
+                    toggle(ui, &mut self.settings.dpi_override);
+                },
+            );
+        });
+
+        ui.label(RichText::new("How it works").font(bold(15.0)).color(text()));
         ui.add_space(4.0);
         card(ui, |ui| {
             ui.label(
@@ -569,7 +976,7 @@ impl SettingsApp {
                     "Put files at the same path they have inside the Roblox install. For example:",
                 )
                 .size(12.5)
-                .color(TEXT_DIM),
+                .color(text_dim()),
             );
             ui.add_space(6.0);
             for (path, what) in [
@@ -579,8 +986,8 @@ impl SettingsApp {
                 ("PlatformContent/pc/textures/", "textures"),
             ] {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(path).monospace().color(BLUE_LIGHT));
-                    ui.label(RichText::new(what).size(12.5).color(TEXT_DIM));
+                    ui.label(RichText::new(path).monospace().color(blue_light()));
+                    ui.label(RichText::new(what).size(12.5).color(text_dim()));
                 });
             }
         });
@@ -594,8 +1001,8 @@ impl SettingsApp {
         );
 
         egui::Frame::new()
-            .fill(Color32::from_rgb(0x3A, 0x1F, 0x22))
-            .stroke(egui::Stroke::new(1.0, RED))
+            .fill(palette().danger_bg)
+            .stroke(egui::Stroke::new(1.0, red()))
             .corner_radius(CornerRadius::same(10))
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
@@ -603,7 +1010,7 @@ impl SettingsApp {
                 ui.label(
                     RichText::new("Use at your own risk")
                         .font(bold(14.5))
-                        .color(RED),
+                        .color(red()),
                 );
                 ui.add(
                     egui::Label::new(
@@ -612,7 +1019,7 @@ impl SettingsApp {
                              banned. They're off unless you turn them on.",
                         )
                         .size(12.5)
-                        .color(TEXT),
+                        .color(text()),
                     )
                     .wrap(),
                 );
@@ -735,18 +1142,18 @@ impl SettingsApp {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(72.0), Sense::hover());
-            draw_mark(ui.painter(), rect.center(), 30.0, BG);
+            draw_mark(ui.painter(), rect.center(), 30.0, bg());
             ui.add_space(12.0);
-            ui.label(RichText::new("Rusticean").font(bold(22.0)).color(TEXT));
+            ui.label(RichText::new("Rusticean").font(bold(22.0)).color(text()));
             ui.label(
                 RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
                     .size(13.0)
-                    .color(TEXT_DIM),
+                    .color(text_dim()),
             );
             ui.add_space(10.0);
             ui.label(
                 RichText::new("A Roblox bootstrapper written in Rust, inspired by Bloxstrap.")
-                    .color(TEXT_DIM),
+                    .color(text_dim()),
             );
             ui.add_space(16.0);
             ui.horizontal(|ui| {
@@ -768,7 +1175,7 @@ impl SettingsApp {
                     "Not affiliated with Roblox Corporation. Based on Bloxstrap (MIT, © pizzaboxer).",
                 )
                 .size(11.5)
-                .color(TEXT_DIM),
+                .color(text_dim()),
             );
         });
     }
@@ -789,15 +1196,42 @@ impl SettingsApp {
 }
 
 fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str) {
-    ui.label(RichText::new(title).font(bold(24.0)).color(TEXT));
-    ui.label(RichText::new(subtitle).size(13.0).color(TEXT_DIM));
+    ui.label(RichText::new(title).font(bold(24.0)).color(text()));
+    ui.label(RichText::new(subtitle).size(13.0).color(text_dim()));
     ui.add_space(14.0);
+}
+
+/// A heading between cards.
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.add_space(4.0);
+    ui.label(RichText::new(title).font(bold(16.0)).color(text()));
+    ui.add_space(2.0);
+}
+
+fn hint(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).size(12.0).color(text_dim()));
+    ui.add_space(4.0);
+}
+
+/// A native "open file" dialog. Only on Windows; elsewhere the button does nothing.
+fn pick_file(kind: &str, extensions: &[&str]) -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        rfd::FileDialog::new()
+            .add_filter(kind, extensions)
+            .pick_file()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (kind, extensions);
+        None
+    }
 }
 
 fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     let inner = egui::Frame::new()
-        .fill(SURFACE)
-        .stroke(egui::Stroke::new(1.0, BORDER))
+        .fill(surface())
+        .stroke(egui::Stroke::new(1.0, border()))
         .corner_radius(CornerRadius::same(10))
         .inner_margin(egui::Margin::symmetric(16, 12))
         .show(ui, |ui| {
@@ -820,8 +1254,10 @@ fn setting_row(
         let text_width = (ui.available_width() - 230.0).max(200.0);
         ui.vertical(|ui| {
             ui.set_width(text_width);
-            ui.label(RichText::new(title).font(bold(14.5)).color(TEXT));
-            ui.add(egui::Label::new(RichText::new(description).size(12.0).color(TEXT_DIM)).wrap());
+            ui.label(RichText::new(title).font(bold(14.5)).color(text()));
+            ui.add(
+                egui::Label::new(RichText::new(description).size(12.0).color(text_dim())).wrap(),
+            );
         });
         ui.with_layout(Layout::right_to_left(Align::Center), control);
     });
@@ -853,7 +1289,7 @@ fn toggle(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
         resp.mark_changed();
     }
     let t = ui.ctx().animate_bool_responsive(resp.id, *on);
-    let bg = BORDER.lerp_to_gamma(BLUE, t);
+    let bg = border().lerp_to_gamma(blue(), t);
     ui.painter().rect_filled(rect, CornerRadius::same(11), bg);
     let x = egui::lerp(rect.left() + 11.0..=rect.right() - 11.0, t);
     ui.painter()
@@ -866,11 +1302,11 @@ fn remove_button(ui: &mut egui::Ui) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
     if resp.hovered() {
         ui.painter()
-            .rect_filled(rect, CornerRadius::same(5), BORDER);
+            .rect_filled(rect, CornerRadius::same(5), border());
     }
     let c = rect.center();
     let s = 4.0;
-    let stroke = egui::Stroke::new(1.5, if resp.hovered() { RED } else { TEXT_DIM });
+    let stroke = egui::Stroke::new(1.5, if resp.hovered() { red() } else { text_dim() });
     ui.painter()
         .line_segment([c + Vec2::new(-s, -s), c + Vec2::new(s, s)], stroke);
     ui.painter()
@@ -881,7 +1317,7 @@ fn remove_button(ui: &mut egui::Ui) -> egui::Response {
 fn wide_primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), Sense::click());
-    let fill = if resp.hovered() { BLUE_LIGHT } else { BLUE };
+    let fill = if resp.hovered() { blue_light() } else { blue() };
     ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
     ui.painter().text(
         rect.center(),

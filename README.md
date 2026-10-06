@@ -38,14 +38,22 @@ that, clicking **Play** on roblox.com goes through it.
 Settings (saved to `Settings.json`):
 
 - **Launch:** progress window on/off, ask before closing a running Roblox, process priority,
-  automatic updates (off pins the installed version), disable fullscreen optimizations,
-  release channel.
-- **FastFlags:** frame-rate cap, graphics API, anti-aliasing, texture quality, remove grass,
-  exclusive fullscreen, and custom flags. They're written to the version's
-  `ClientSettings/ClientAppSettings.json` on every launch.
+  automatic updates (off pins the installed version), release channel.
+- **Integrations:** activity tracking (reads Roblox's log to see which game you're in), a
+  notification with the server's location, closing Roblox when you leave a game instead of
+  returning to its home screen, Discord Rich Presence (game, join button, account), and
+  custom programs started alongside Roblox.
 - **Mods:** files in `%LOCALAPPDATA%\Rusticean\Modifications` are copied over the
   Roblox install on every launch (e.g. `content/sounds/ouch.ogg`). Removing a file restores
-  the original.
+  the original. Built-in presets: 2006/2013 cursors, old avatar editor background, old
+  character sounds, emoji style, custom font. Compatibility: disable fullscreen
+  optimizations, override high DPI scaling.
+- **Engine:** FastFlags (frame-rate cap, graphics API, anti-aliasing, texture quality,
+  preserve rendering quality with display scaling, remove grass, exclusive fullscreen,
+  custom flags), written to the version's `ClientSettings/ClientAppSettings.json` on every
+  launch unless "Let Rusticean manage FastFlags" is off. Also resets every setting.
+- **Appearance:** dark, light or system theme; progress window style (Rusticean, compact,
+  classic dialog), icon (including your own image) and title.
 - **Storage:** delete old downloads and logs automatically or on demand, reinstall Roblox.
 - **Risky** (off by default; may get an account warned or banned): multiple Roblox windows,
   anti-AFK, fullbright. Multi-instance and anti-AFK keep a small background helper running
@@ -56,7 +64,7 @@ and [Fishstrap](https://github.com/fishstrap/fishstrap).
 
 A small window shows progress while Roblox downloads and starts, and explains any error.
 
-Flags: `-settings`, `-player [uri]`, `-channel <name>`, `-version <guid>`, `-force`, `-nolaunch`, `-quiet` (no window), `-help`.
+Flags: `-settings`, `-preview` (show the progress window without launching), `-player [uri]`, `-channel <name>`, `-version <guid>`, `-force`, `-nolaunch`, `-quiet` (no window), `-help`.
 Logs are in `%LOCALAPPDATA%\Rusticean\Logs`.
 
 To go back to the stock launcher, reinstall Roblox from roblox.com.
