@@ -9,8 +9,9 @@ use rbx_deploy::install::{InstallJob, Progress};
 use rbx_deploy::{BinaryType, cdn, manifest, reqwest, version};
 
 use crate::channel;
+use crate::cleanup;
 use crate::paths::{APP_NAME, Paths};
-use crate::settings::{self, Settings};
+use crate::settings::{self, ProcessPriority, Settings};
 use crate::state::State;
 
 #[derive(Debug, thiserror::Error)]
@@ -107,18 +108,32 @@ pub async fn run(
     let mut state = State::load(&paths.state_file);
     let settings = Settings::load(&paths.settings_file);
     let client = http_client().map_err(rbx_deploy::Error::from)?;
-    let mirror = cdn::find_mirror(&client).await?;
-    check_cancel()?;
+
+    // with auto-update off, launch what's installed without asking Roblox for anything
+    let pinned = (!settings.auto_update && !opts.force && opts.version_guid.is_none())
+        .then(|| state.player.version_guid.clone())
+        .flatten()
+        .filter(|guid| {
+            paths
+                .version_dir(guid)
+                .join(BINARY.executable_name())
+                .exists()
+        });
 
     on_status(Status::CheckingForUpdates);
 
-    let version_guid = match &opts.version_guid {
-        Some(guid) => {
+    let version_guid = match (&opts.version_guid, pinned) {
+        (Some(guid), _) => {
             tracing::info!(%guid, "version set from arguments");
             guid.clone()
         }
-        None => latest_version_guid(&client, opts, &settings).await?,
+        (None, Some(guid)) => {
+            tracing::info!(%guid, "auto-update is off, launching the installed version");
+            guid
+        }
+        (None, None) => latest_version_guid(&client, opts, &settings).await?,
     };
+    check_cancel()?;
 
     let version_dir = paths.version_dir(&version_guid);
     let exe = version_dir.join(BINARY.executable_name());
@@ -126,6 +141,7 @@ pub async fn run(
     let installed = state.player.version_guid.as_deref() == Some(version_guid.as_str());
     if opts.force || !installed || !exe.exists() {
         tracing::info!(%version_guid, "installing");
+        let mirror = cdn::find_mirror(&client).await?;
         check_cancel()?;
 
         let manifest_text = client
@@ -179,9 +195,24 @@ pub async fn run(
     if !opts.no_launch {
         check_cancel()?;
         on_status(Status::Starting);
-        start_roblox(&exe, &version_dir, &opts.launch_args)?;
+        start_roblox(
+            &exe,
+            &version_dir,
+            &opts.launch_args,
+            settings.process_priority,
+        )?;
     }
     on_status(Status::Finished);
+
+    // housekeeping after Roblox is up, so it never delays the launch
+    if let Some(max_age) = settings.cleanup.max_age() {
+        let report = cleanup::run(paths, max_age);
+        tracing::info!(
+            files = report.files,
+            bytes = report.bytes,
+            "cleaned up old files"
+        );
+    }
     Ok(())
 }
 
@@ -246,12 +277,26 @@ fn cleanup_old_versions(paths: &Paths, keep: &str) {
     }
 }
 
-fn start_roblox(exe: &Path, working_dir: &Path, launch_args: &str) -> Result<(), Error> {
+fn start_roblox(
+    exe: &Path,
+    working_dir: &Path,
+    launch_args: &str,
+    priority: ProcessPriority,
+) -> Result<(), Error> {
     let mut command = std::process::Command::new(exe);
     command.current_dir(working_dir);
     if !launch_args.is_empty() {
         command.arg(launch_args);
     }
+
+    // set at creation, so we never need a handle to the running game to change it
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(priority.creation_flag());
+    }
+    #[cfg(not(windows))]
+    let _ = priority;
 
     // drop the child (and its process handle) immediately: Roblox's anti-cheat
     // trips if a launcher keeps a handle open to it

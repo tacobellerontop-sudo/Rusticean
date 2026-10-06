@@ -55,3 +55,31 @@ impl Drop for NamedMutexGuard {
         }
     }
 }
+
+/// Whether a Roblox Player is open, judged by the singleton mutex it creates.
+/// (It can linger a few seconds after the window closes.)
+#[cfg(windows)]
+pub fn is_roblox_running() -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
+
+    let name: Vec<u16> = "ROBLOX_singletonMutex"
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    // SAFETY: `name` is NUL-terminated; a non-null handle is closed straight away.
+    unsafe {
+        let handle = OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, 0, name.as_ptr());
+        if handle.is_null() {
+            false
+        } else {
+            CloseHandle(handle);
+            true
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_roblox_running() -> bool {
+    false
+}

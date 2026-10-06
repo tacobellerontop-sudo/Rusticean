@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui::{
-    self, Align, Align2, Color32, CornerRadius, FontId, Layout, Pos2, Rect, RichText, Sense, Shape,
-    Stroke, StrokeKind, Vec2, ViewportCommand,
+    self, Align, Align2, Color32, CornerRadius, Layout, Pos2, Rect, RichText, Sense, Shape, Stroke,
+    StrokeKind, Vec2, ViewportCommand,
 };
-use rbx_core::{LaunchOptions, Paths, Status};
+use rbx_core::{LaunchOptions, Paths, Settings, Status};
 
 use super::theme::*;
 use rbx_deploy::install::Stage;
@@ -27,6 +27,8 @@ struct Shared {
 }
 
 enum Phase {
+    /// Roblox is already open; waiting for the user to confirm.
+    Confirm,
     Running,
     Finished(Instant),
     Failed(String),
@@ -39,6 +41,8 @@ struct BootstrapperApp {
     phase: Phase,
     speed: SpeedMeter,
     started: Instant,
+    /// The launch, held back while [`Phase::Confirm`] is showing.
+    pending: Option<(Paths, LaunchOptions)>,
 }
 
 /// Show the window and run the bootstrapper behind it.
@@ -69,21 +73,23 @@ pub fn run(paths: Paths, opts: LaunchOptions) -> anyhow::Result<bool> {
         options,
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx);
-            spawn_worker(
-                paths,
-                opts,
-                app_shared.clone(),
-                app_cancel.clone(),
-                cc.egui_ctx.clone(),
-            );
-            Ok(Box::new(BootstrapperApp {
+            // launching while Roblox is open closes the running game, so ask first
+            let confirm = !opts.no_launch
+                && Settings::load(&paths.settings_file).confirm_launches
+                && rbx_win::sync::is_roblox_running();
+            let mut app = BootstrapperApp {
                 shared: app_shared,
                 cancel: app_cancel,
                 logs_dir,
-                phase: Phase::Running,
+                phase: Phase::Confirm,
                 speed: SpeedMeter::default(),
                 started: Instant::now(),
-            }))
+                pending: Some((paths, opts)),
+            };
+            if !confirm {
+                app.start(&cc.egui_ctx);
+            }
+            Ok(Box::new(app))
         }),
     )
     .map_err(|e| anyhow::anyhow!("could not open the window: {e}"))?;
@@ -206,6 +212,7 @@ impl eframe::App for BootstrapperApp {
         );
 
         match &self.phase {
+            Phase::Confirm => self.confirm_view(&mut body_ui),
             Phase::Failed(message) => {
                 let message = message.clone();
                 self.error_view(&mut body_ui, &message);
@@ -227,37 +234,62 @@ impl BootstrapperApp {
     /// A draggable strip across the top with the app name and a close button.
     fn title_bar(&mut self, ui: &mut egui::Ui, full: Rect) {
         let bar = Rect::from_min_size(full.min, Vec2::new(full.width(), 34.0));
-        let drag = ui.interact(bar, ui.id().with("title_bar"), Sense::click_and_drag());
-        if drag.drag_started() {
-            ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
-        }
-
-        ui.painter().text(
-            bar.left_center() + Vec2::new(14.0, 0.0),
-            Align2::LEFT_CENTER,
-            "robloxbootstrapper",
-            FontId::proportional(12.5),
-            TEXT_DIM,
-        );
-
-        let close =
-            Rect::from_center_size(bar.right_center() - Vec2::new(20.0, 0.0), Vec2::splat(26.0));
-        let resp = ui.interact(close, ui.id().with("close"), Sense::click());
-        if resp.hovered() {
-            ui.painter()
-                .rect_filled(close, CornerRadius::same(6), SURFACE);
-        }
-        let c = close.center();
-        let s = 4.5;
-        let stroke = Stroke::new(1.5, if resp.hovered() { TEXT } else { TEXT_DIM });
-        ui.painter()
-            .line_segment([c + Vec2::new(-s, -s), c + Vec2::new(s, s)], stroke);
-        ui.painter()
-            .line_segment([c + Vec2::new(-s, s), c + Vec2::new(s, -s)], stroke);
-        if resp.clicked() {
+        if title_bar(ui, bar, "robloxbootstrapper", false) == TitleAction::Close {
             self.cancel.store(true, Ordering::Relaxed);
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
         }
+    }
+
+    fn start(&mut self, ctx: &egui::Context) {
+        if let Some((paths, opts)) = self.pending.take() {
+            spawn_worker(
+                paths,
+                opts,
+                self.shared.clone(),
+                self.cancel.clone(),
+                ctx.clone(),
+            );
+        }
+        self.phase = Phase::Running;
+        self.started = Instant::now();
+    }
+
+    fn confirm_view(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::hover());
+        ui.painter().circle_filled(rect.center(), 20.0, BLUE);
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            "!",
+            bold(24.0),
+            Color32::WHITE,
+        );
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new("Roblox is already open")
+                .font(bold(18.0))
+                .color(TEXT),
+        );
+        ui.add_space(6.0);
+        ui.label(
+            RichText::new("Launching again will close the game that's running.")
+                .size(13.0)
+                .color(TEXT_DIM),
+        );
+
+        ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
+            ui.horizontal(|ui| {
+                let width = 2.0 * 120.0 + ui.spacing().item_spacing.x;
+                ui.add_space((ui.available_width() - width).max(0.0) / 2.0);
+                if secondary_button(ui, "Cancel").clicked() {
+                    ui.ctx().send_viewport_cmd(ViewportCommand::Close);
+                }
+                if primary_button(ui, "Launch anyway").clicked() {
+                    self.start(ui.ctx());
+                }
+            });
+        });
     }
 
     fn progress_view(&mut self, ui: &mut egui::Ui, status: Option<&Status>) {
@@ -440,7 +472,7 @@ fn progress_bar(ui: &mut egui::Ui, fraction: Option<f32>, t: f32) {
     }
 }
 
-fn format_bytes(bytes: u64) -> String {
+pub(super) fn format_bytes(bytes: u64) -> String {
     const MB: f64 = 1024.0 * 1024.0;
     let mb = bytes as f64 / MB;
     if mb >= 1000.0 {

@@ -197,3 +197,81 @@ pub fn square(center: egui::Pos2, half: f32, angle: f32) -> Vec<egui::Pos2> {
         })
         .collect()
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TitleAction {
+    None,
+    Minimize,
+    Close,
+}
+
+/// Our own title bar for undecorated windows: drag anywhere on it to move the window,
+/// with a minimise (optional) and close button on the right.
+pub fn title_bar(ui: &mut egui::Ui, bar: egui::Rect, title: &str, minimize: bool) -> TitleAction {
+    let drag = ui.interact(bar, ui.id().with("title_bar"), Sense::click_and_drag());
+    if drag.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+
+    let mark_center = bar.left_center() + Vec2::new(18.0, 0.0);
+    draw_mark(
+        ui.painter(),
+        mark_center,
+        6.5,
+        Color32::from_rgb(0x14, 0x15, 0x17),
+    );
+    ui.painter().text(
+        mark_center + Vec2::new(14.0, 0.0),
+        Align2::LEFT_CENTER,
+        title,
+        FontId::proportional(12.5),
+        TEXT_DIM,
+    );
+
+    let mut action = TitleAction::None;
+    let size = Vec2::new(40.0, bar.height());
+    let close = egui::Rect::from_min_size(egui::pos2(bar.right() - size.x, bar.top()), size);
+
+    let resp = ui.interact(close, ui.id().with("close"), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(
+            close,
+            CornerRadius::ZERO,
+            Color32::from_rgb(0xC4, 0x2B, 0x1C),
+        );
+    }
+    let c = close.center();
+    let s = 4.5;
+    let stroke = Stroke::new(
+        1.3,
+        if resp.hovered() {
+            Color32::WHITE
+        } else {
+            TEXT_DIM
+        },
+    );
+    ui.painter()
+        .line_segment([c + Vec2::new(-s, -s), c + Vec2::new(s, s)], stroke);
+    ui.painter()
+        .line_segment([c + Vec2::new(-s, s), c + Vec2::new(s, -s)], stroke);
+    if resp.clicked() {
+        action = TitleAction::Close;
+    }
+
+    if minimize {
+        let min = close.translate(Vec2::new(-size.x, 0.0));
+        let resp = ui.interact(min, ui.id().with("minimize"), Sense::click());
+        if resp.hovered() {
+            ui.painter().rect_filled(min, CornerRadius::ZERO, SURFACE);
+        }
+        let c = min.center();
+        let stroke = Stroke::new(1.3, if resp.hovered() { TEXT } else { TEXT_DIM });
+        ui.painter()
+            .line_segment([c + Vec2::new(-5.0, 0.0), c + Vec2::new(5.0, 0.0)], stroke);
+        if resp.clicked() {
+            action = TitleAction::Minimize;
+        }
+    }
+
+    action
+}

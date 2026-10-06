@@ -3,6 +3,7 @@
 
 pub mod bootstrap;
 pub mod channel;
+pub mod cleanup;
 pub mod paths;
 pub mod settings;
 pub mod state;

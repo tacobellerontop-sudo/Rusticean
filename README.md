@@ -23,9 +23,17 @@ downloads the latest Roblox into `%LOCALAPPDATA%\robloxbootstrapper\Versions`, r
 it as the handler for `roblox://` and `roblox-player://` links, and opens Roblox. After
 that, clicking **Play** on roblox.com goes through it.
 
-Settings (saved to `Settings.json`): progress window on/off, release channel, reinstall,
-frame-rate cap, graphics API, and custom FastFlags. FastFlags are written to the version's
-`ClientSettings/ClientAppSettings.json` on every launch.
+Settings (saved to `Settings.json`):
+
+- **Launch:** progress window on/off, ask before closing a running Roblox, process priority,
+  automatic updates (off pins the installed version), release channel.
+- **FastFlags:** frame-rate cap, graphics API, anti-aliasing, texture quality, remove grass,
+  exclusive fullscreen, and custom flags. They're written to the version's
+  `ClientSettings/ClientAppSettings.json` on every launch.
+- **Storage:** delete old downloads and logs automatically or on demand, reinstall Roblox.
+
+Some of these come from the Bloxstrap forks [Voidstrap](https://github.com/voldstrap/Voidstrap)
+and [Fishstrap](https://github.com/fishstrap/fishstrap).
 
 A small window shows progress while Roblox downloads and starts, and explains any error.
 

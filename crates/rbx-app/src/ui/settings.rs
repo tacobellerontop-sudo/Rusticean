@@ -1,10 +1,13 @@
-//! The settings window: launch options, FastFlags and an About page. Changes save as
-//! soon as they're made; "Launch Roblox" closes the window and starts the game.
+//! The settings window: launch options, FastFlags, storage and an About page. Changes
+//! save as soon as they're made; "Launch Roblox" closes the window and starts the game.
 
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Align, Color32, CornerRadius, Layout, RichText, Sense, Vec2};
-use rbx_core::settings::{RenderingApi, parse_flag_value};
+use rbx_core::cleanup;
+use rbx_core::settings::{
+    CleanupAge, Msaa, ProcessPriority, RenderingApi, TextureQuality, parse_flag_value,
+};
 use rbx_core::state::State;
 use rbx_core::{Paths, Settings};
 
@@ -12,22 +15,26 @@ use super::theme::*;
 
 const WINDOW_SIZE: Vec2 = Vec2::new(760.0, 520.0);
 const SIDEBAR_WIDTH: f32 = 200.0;
+const TITLE_BAR_HEIGHT: f32 = 36.0;
+const TITLE_BAR_BG: Color32 = Color32::from_rgb(0x12, 0x13, 0x15);
 const REPO_URL: &str = "https://github.com/tacobellerontop-sudo/fictional-garbanzo";
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Page {
     Launch,
     FastFlags,
+    Storage,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 3] = [Page::Launch, Page::FastFlags, Page::About];
+    const ALL: [Page; 4] = [Page::Launch, Page::FastFlags, Page::Storage, Page::About];
 
     fn label(self) -> &'static str {
         match self {
             Page::Launch => "Launch",
             Page::FastFlags => "FastFlags",
+            Page::Storage => "Storage",
             Page::About => "About",
         }
     }
@@ -44,6 +51,8 @@ struct SettingsApp {
     new_flag_name: String,
     new_flag_value: String,
     reinstall_requested: bool,
+    /// Result of the last "Clean now".
+    cleaned: Option<cleanup::Report>,
     launch_requested: bool,
 }
 
@@ -54,7 +63,8 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
         viewport: egui::ViewportBuilder::default()
             .with_title("robloxbootstrapper settings")
             .with_inner_size(WINDOW_SIZE)
-            .with_min_inner_size(Vec2::new(640.0, 440.0))
+            .with_decorations(false)
+            .with_resizable(false)
             .with_icon(app_icon()),
         centered: true,
         ..Default::default()
@@ -80,6 +90,7 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
                     new_flag_name: String::new(),
                     new_flag_value: String::new(),
                     reinstall_requested: false,
+                    cleaned: None,
                     launch_requested: false,
                 },
                 launch: launch_flag,
@@ -114,6 +125,27 @@ impl eframe::App for Wrapper {
 
 impl SettingsApp {
     fn ui(&mut self, ui: &mut egui::Ui) {
+        let window = ui.max_rect();
+
+        egui::Panel::top("title_bar")
+            .exact_size(TITLE_BAR_HEIGHT)
+            .frame(egui::Frame::new().fill(TITLE_BAR_BG))
+            .show(ui, |ui| {
+                let bar = ui.max_rect();
+                match title_bar(ui, bar, "Settings", true) {
+                    TitleAction::Close => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                    TitleAction::Minimize => ui
+                        .ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
+                    TitleAction::None => {}
+                }
+                ui.painter().hline(
+                    bar.x_range(),
+                    bar.bottom() - 0.5,
+                    egui::Stroke::new(1.0, BORDER),
+                );
+            });
+
         egui::Panel::left("sidebar")
             .exact_size(SIDEBAR_WIDTH)
             .resizable(false)
@@ -132,9 +164,23 @@ impl SettingsApp {
                     .show(ui, |ui| match self.page {
                         Page::Launch => self.launch_page(ui),
                         Page::FastFlags => self.fast_flags_page(ui),
+                        Page::Storage => self.storage_page(ui),
                         Page::About => self.about_page(ui),
                     });
             });
+
+        // without OS decorations the window needs its own edge
+        ui.ctx()
+            .layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("window_border"),
+            ))
+            .rect_stroke(
+                window,
+                CornerRadius::ZERO,
+                egui::Stroke::new(1.0, BORDER),
+                egui::StrokeKind::Inside,
+            );
 
         self.autosave();
     }
@@ -227,6 +273,52 @@ impl SettingsApp {
                     toggle(ui, &mut self.settings.show_progress_window);
                 },
             );
+            ui.separator();
+            setting_row(
+                ui,
+                "Ask before relaunching",
+                "If Roblox is already open, ask first. Launching again closes the running game.",
+                |ui| {
+                    toggle(ui, &mut self.settings.confirm_launches);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Process priority",
+                "How much CPU time Windows gives Roblox compared to other programs.",
+                |ui| {
+                    combo(
+                        ui,
+                        "priority",
+                        &mut self.settings.process_priority,
+                        &ProcessPriority::ALL,
+                        ProcessPriority::label,
+                    );
+                },
+            );
+        });
+
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Automatic updates",
+                if self.settings.auto_update {
+                    "Download new Roblox versions as soon as they come out."
+                } else {
+                    "Roblox stays on the installed version. Games may refuse to join once it's out of date."
+                },
+                |ui| {
+                    toggle(ui, &mut self.settings.auto_update);
+                },
+            );
+            if !self.settings.auto_update {
+                ui.label(
+                    RichText::new("Turn this back on if Roblox says it needs an update.")
+                        .size(12.0)
+                        .color(RED),
+                );
+            }
         });
 
         card(ui, |ui| {
@@ -242,42 +334,6 @@ impl SettingsApp {
                         let trimmed = self.channel_text.trim();
                         self.settings.channel =
                             (!trimmed.is_empty()).then(|| trimmed.to_ascii_lowercase());
-                    }
-                },
-            );
-        });
-
-        card(ui, |ui| {
-            setting_row(
-                ui,
-                "Reinstall Roblox",
-                if self.reinstall_requested {
-                    "Done. Roblox will be downloaded again the next time it launches."
-                } else {
-                    "Downloads a fresh copy on the next launch. Useful if Roblox won't start."
-                },
-                |ui| {
-                    if ui
-                        .add_enabled(!self.reinstall_requested, egui::Button::new("Reinstall"))
-                        .clicked()
-                    {
-                        let mut state = State::load(&self.paths.state_file);
-                        state.player.version_guid = None;
-                        match state.save(&self.paths.state_file) {
-                            Ok(()) => self.reinstall_requested = true,
-                            Err(e) => self.save_result = Some((Instant::now(), Err(e.to_string()))),
-                        }
-                    }
-                },
-            );
-            ui.separator();
-            setting_row(
-                ui,
-                "Roblox files",
-                "The installed versions, downloads cache and logs.",
-                |ui| {
-                    if ui.button("Open folder").clicked() {
-                        open_path(&self.paths.base);
                     }
                 },
             );
@@ -340,6 +396,50 @@ impl SettingsApp {
                                 );
                             }
                         });
+                },
+            );
+        });
+
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Anti-aliasing",
+                "Smooths jagged edges. Lower is faster.",
+                |ui| {
+                    combo(ui, "msaa", &mut self.settings.msaa, &Msaa::ALL, Msaa::label);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Texture quality",
+                "Force a texture detail level instead of letting Roblox pick.",
+                |ui| {
+                    combo(
+                        ui,
+                        "texture_quality",
+                        &mut self.settings.texture_quality,
+                        &TextureQuality::ALL,
+                        TextureQuality::label,
+                    );
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Remove grass",
+                "Stop drawing grass on terrain, which helps on slower PCs.",
+                |ui| {
+                    toggle(ui, &mut self.settings.disable_grass);
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Exclusive fullscreen",
+                "Alt+Enter switches to true fullscreen instead of a borderless window.",
+                |ui| {
+                    toggle(ui, &mut self.settings.exclusive_fullscreen);
                 },
             );
         });
@@ -416,6 +516,85 @@ impl SettingsApp {
                         .desired_width(f32::INFINITY),
                 );
             });
+    }
+
+    fn storage_page(&mut self, ui: &mut egui::Ui) {
+        page_header(
+            ui,
+            "Storage",
+            "Cached downloads, logs and the Roblox install.",
+        );
+
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Delete old files",
+                "Remove cached downloads and logs (ours and Roblox's) after Roblox launches.",
+                |ui| {
+                    combo(
+                        ui,
+                        "cleanup",
+                        &mut self.settings.cleanup,
+                        &CleanupAge::ALL,
+                        CleanupAge::label,
+                    );
+                },
+            );
+            ui.separator();
+            let description = match self.cleaned {
+                Some(r) if r.files == 0 => "Nothing to delete.".to_owned(),
+                Some(r) => format!(
+                    "Deleted {} file{}, freeing {}.",
+                    r.files,
+                    if r.files == 1 { "" } else { "s" },
+                    super::bootstrapper::format_bytes(r.bytes)
+                ),
+                None => {
+                    "Delete every cached download and log now. Files in use are kept.".to_owned()
+                }
+            };
+            setting_row(ui, "Clean up now", &description, |ui| {
+                if ui.button("Clean now").clicked() {
+                    self.cleaned = Some(cleanup::run(&self.paths, Duration::ZERO));
+                }
+            });
+        });
+
+        card(ui, |ui| {
+            setting_row(
+                ui,
+                "Reinstall Roblox",
+                if self.reinstall_requested {
+                    "Done. Roblox will be downloaded again the next time it launches."
+                } else {
+                    "Downloads a fresh copy on the next launch. Useful if Roblox won't start."
+                },
+                |ui| {
+                    if ui
+                        .add_enabled(!self.reinstall_requested, egui::Button::new("Reinstall"))
+                        .clicked()
+                    {
+                        let mut state = State::load(&self.paths.state_file);
+                        state.player.version_guid = None;
+                        match state.save(&self.paths.state_file) {
+                            Ok(()) => self.reinstall_requested = true,
+                            Err(e) => self.save_result = Some((Instant::now(), Err(e.to_string()))),
+                        }
+                    }
+                },
+            );
+            ui.separator();
+            setting_row(
+                ui,
+                "Roblox files",
+                "The installed versions, downloads cache and logs.",
+                |ui| {
+                    if ui.button("Open folder").clicked() {
+                        open_path(&self.paths.base);
+                    }
+                },
+            );
+        });
     }
 
     fn about_page(&mut self, ui: &mut egui::Ui) {
@@ -512,6 +691,23 @@ fn setting_row(
         });
         ui.with_layout(Layout::right_to_left(Align::Center), control);
     });
+}
+
+fn combo<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    id: &str,
+    value: &mut T,
+    options: &[T],
+    label: fn(T) -> &'static str,
+) {
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(label(*value))
+        .width(140.0)
+        .show_ui(ui, |ui| {
+            for &option in options {
+                ui.selectable_value(value, option, label(option));
+            }
+        });
 }
 
 /// An iOS-style switch in Roblox blue.
