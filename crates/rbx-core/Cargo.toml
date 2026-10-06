@@ -1,0 +1,19 @@
+[package]
+name = "rbx-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+dirs = "7.0.0"
+rbx-deploy = { version = "0.1.0", path = "../rbx-deploy" }
+rbx-win = { version = "0.1.0", path = "../rbx-win" }
+regex = "1.13.1"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.21"
+tokio = { version = "1.53.2", features = ["rt", "fs", "time"] }
+tracing = "0.1.44"
+
+[dev-dependencies]
+tempfile = "3.27.0"

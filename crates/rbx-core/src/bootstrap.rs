@@ -1,0 +1,232 @@
+//! The install-then-launch flow, ported from Bloxstrap's `Bootstrapper.Run`.
+
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
+
+use rbx_deploy::install::{InstallJob, ProgressFn};
+use rbx_deploy::{BinaryType, cdn, manifest, reqwest, version};
+
+use crate::channel;
+use crate::paths::{APP_NAME, Paths};
+use crate::state::State;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error(transparent)]
+    Deploy(#[from] rbx_deploy::Error),
+
+    #[error("{context}: {source}")]
+    Io {
+        context: String,
+        #[source]
+        source: std::io::Error,
+    },
+}
+
+fn io_err(context: impl Into<String>) -> impl FnOnce(std::io::Error) -> Error {
+    move |source| Error::Io {
+        context: context.into(),
+        source,
+    }
+}
+
+/// What the user (or the browser, via the protocol handler) asked for.
+#[derive(Debug, Clone, Default)]
+pub struct LaunchOptions {
+    /// Passed through to the Roblox client, usually a `roblox-player:` URI. Empty opens the app.
+    pub launch_args: String,
+    /// `-channel`: overrides the URI and registry.
+    pub channel: Option<String>,
+    /// `-version`: install this exact version GUID instead of the latest.
+    pub version_guid: Option<String>,
+    /// `-force`: reinstall even if the version is already present.
+    pub force: bool,
+    /// `-nolaunch`: install or update, then exit without starting Roblox.
+    pub no_launch: bool,
+}
+
+const BINARY: BinaryType = BinaryType::WindowsPlayer;
+
+pub fn http_client() -> reqwest::Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(concat!("robloxbootstrapper/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(Duration::from_secs(15))
+        .build()
+}
+
+/// Make sure the latest Roblox Player is installed, then start it.
+pub async fn run(
+    paths: &Paths,
+    opts: &LaunchOptions,
+    on_progress: ProgressFn,
+) -> Result<(), Error> {
+    paths
+        .ensure_dirs()
+        .map_err(io_err("creating data folders"))?;
+
+    // one bootstrapper at a time, so two clicks never upgrade concurrently
+    let mutex_name = format!("{APP_NAME}-bootstrapper-{}", BINARY.api_name());
+    let _guard = tokio::task::spawn_blocking(move || rbx_win::sync::acquire(&mutex_name))
+        .await
+        .expect("mutex task panicked")
+        .map_err(io_err("acquiring the bootstrapper lock"))?;
+
+    // state may have changed while we waited for another instance
+    let mut state = State::load(&paths.state_file);
+    let client = http_client().map_err(rbx_deploy::Error::from)?;
+    let mirror = cdn::find_mirror(&client).await?;
+
+    let version_guid = match &opts.version_guid {
+        Some(guid) => {
+            tracing::info!(%guid, "version set from arguments");
+            guid.clone()
+        }
+        None => latest_version_guid(&client, opts).await?,
+    };
+
+    let version_dir = paths.version_dir(&version_guid);
+    let exe = version_dir.join(BINARY.executable_name());
+
+    let installed = state.player.version_guid.as_deref() == Some(version_guid.as_str());
+    if opts.force || !installed || !exe.exists() {
+        tracing::info!(%version_guid, "installing");
+
+        let manifest_text = client
+            .get(mirror.package_manifest_url(&version_guid))
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status)
+            .map_err(rbx_deploy::Error::from)?
+            .text()
+            .await
+            .map_err(rbx_deploy::Error::from)?;
+
+        InstallJob {
+            client: client.clone(),
+            mirror: mirror.clone(),
+            binary: BINARY,
+            version_guid: version_guid.clone(),
+            packages: manifest::parse(&manifest_text)?,
+            downloads_dir: paths.downloads.clone(),
+            version_dir: version_dir.clone(),
+            stock_downloads_dir: Paths::stock_downloads(),
+            on_progress,
+            cancel: Arc::new(AtomicBool::new(false)),
+        }
+        .run()
+        .await?;
+
+        state.player.version_guid = Some(version_guid.clone());
+        state
+            .save(&paths.state_file)
+            .map_err(io_err("saving State.json"))?;
+
+        cleanup_old_versions(paths, &version_guid);
+    } else {
+        tracing::info!(%version_guid, "already up to date");
+    }
+
+    if !opts.no_launch {
+        start_roblox(&exe, &version_dir, &opts.launch_args)?;
+    }
+    Ok(())
+}
+
+async fn latest_version_guid(
+    client: &reqwest::Client,
+    opts: &LaunchOptions,
+) -> Result<String, Error> {
+    let mut channel = channel::resolve(
+        opts.channel.as_deref(),
+        &opts.launch_args,
+        rbx_win::registry::read_channel(BINARY.registry_name()),
+    );
+    tracing::info!(%channel, "resolved channel");
+
+    let info = match version::fetch(client, BINARY, &channel).await {
+        Err(rbx_deploy::Error::InvalidChannel(bad)) => {
+            tracing::warn!(%bad, "channel refused, falling back to production");
+            channel = version::DEFAULT_CHANNEL.to_owned();
+            version::fetch(client, BINARY, &channel).await?
+        }
+        other => other?,
+    };
+
+    // keep Roblox's own registry value in sync, as the stock launcher does
+    let stored = if version::is_default_channel(&channel) {
+        ""
+    } else {
+        &channel
+    };
+    if let Err(e) = rbx_win::registry::write_channel(BINARY.registry_name(), stored) {
+        tracing::warn!(error = %e, "could not write channel to registry");
+    }
+
+    tracing::info!(version = %info.version, guid = %info.version_guid, "latest version");
+    Ok(info.version_guid)
+}
+
+/// Delete version folders other than `keep`, skipping any whose executable is in use
+/// (Windows refuses to delete a running exe, which is how we detect it).
+fn cleanup_old_versions(paths: &Paths, keep: &str) {
+    let Ok(entries) = std::fs::read_dir(&paths.versions) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() || entry.file_name() == keep {
+            continue;
+        }
+        let exe = dir.join(BINARY.executable_name());
+        match std::fs::remove_file(&exe) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => {
+                tracing::info!(dir = %dir.display(), error = %e, "version still in use, keeping it");
+                continue;
+            }
+        }
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            tracing::warn!(dir = %dir.display(), error = %e, "could not remove old version");
+        }
+    }
+}
+
+fn start_roblox(exe: &Path, working_dir: &Path, launch_args: &str) -> Result<(), Error> {
+    let mut command = std::process::Command::new(exe);
+    command.current_dir(working_dir);
+    if !launch_args.is_empty() {
+        command.arg(launch_args);
+    }
+
+    // drop the child (and its process handle) immediately: Roblox's anti-cheat
+    // trips if a launcher keeps a handle open to it
+    let pid = command
+        .spawn()
+        .map_err(io_err(format!("starting {}", exe.display())))?
+        .id();
+    tracing::info!(pid, "started Roblox");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleanup_keeps_current_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::new(dir.path());
+        paths.ensure_dirs().unwrap();
+        for guid in ["version-old", "version-new"] {
+            let v = paths.version_dir(guid);
+            std::fs::create_dir_all(&v).unwrap();
+            std::fs::write(v.join(BINARY.executable_name()), b"").unwrap();
+        }
+        cleanup_old_versions(&paths, "version-new");
+        assert!(!paths.version_dir("version-old").exists());
+        assert!(paths.version_dir("version-new").exists());
+    }
+}
