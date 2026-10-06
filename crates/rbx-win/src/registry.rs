@@ -120,29 +120,55 @@ pub fn write_channel(_registry_name: &str, _channel: &str) -> io::Result<()> {
 }
 
 const COMPAT_LAYERS: &str = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
-const NO_FSO: &str = "~ DISABLEDXMAXIMIZEDWINDOWEDMODE";
-
-/// Turn Windows' fullscreen optimizations on or off for `exe`, the same as the
-/// checkbox in its Properties > Compatibility tab.
+/// Set Windows' compatibility options for `exe`, the same as the checkboxes in its
+/// Properties > Compatibility tab: disable fullscreen optimizations, and override high
+/// DPI scaling (application-controlled).
 #[cfg(windows)]
-pub fn set_fullscreen_optimizations(exe: &Path, enabled: bool) -> io::Result<()> {
+pub fn set_compat_flags(exe: &Path, disable_fso: bool, dpi_override: bool) -> io::Result<()> {
     use winreg::RegKey;
     use winreg::enums::HKEY_CURRENT_USER;
 
     let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(COMPAT_LAYERS)?;
     let name = exe.display().to_string();
-    if enabled {
-        match key.delete_value(&name) {
+    match compat_value(disable_fso, dpi_override) {
+        Some(value) => key.set_value(&name, &value),
+        None => match key.delete_value(&name) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
-        }
-    } else {
-        key.set_value(&name, &NO_FSO)
+        },
     }
 }
 
 #[cfg(not(windows))]
-pub fn set_fullscreen_optimizations(_exe: &Path, _enabled: bool) -> io::Result<()> {
-    let _ = (COMPAT_LAYERS, NO_FSO);
+pub fn set_compat_flags(_exe: &Path, disable_fso: bool, dpi_override: bool) -> io::Result<()> {
+    let _ = (COMPAT_LAYERS, compat_value(disable_fso, dpi_override));
     Ok(())
+}
+
+fn compat_value(disable_fso: bool, dpi_override: bool) -> Option<String> {
+    let mut layers = Vec::new();
+    if disable_fso {
+        layers.push("DISABLEDXMAXIMIZEDWINDOWEDMODE");
+    }
+    if dpi_override {
+        layers.push("HIGHDPIAWARE");
+    }
+    (!layers.is_empty()).then(|| format!("~ {}", layers.join(" ")))
+}
+
+/// Whether Windows is set to light mode for apps.
+#[cfg(windows)]
+pub fn system_uses_light_theme() -> bool {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|k| k.get_value::<u32, _>("AppsUseLightTheme"))
+        .is_ok_and(|v| v == 1)
+}
+
+#[cfg(not(windows))]
+pub fn system_uses_light_theme() -> bool {
+    false
 }
