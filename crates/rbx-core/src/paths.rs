@@ -9,6 +9,8 @@ pub struct Paths {
     pub downloads: PathBuf,
     pub versions: PathBuf,
     pub logs: PathBuf,
+    /// Files in here are copied over the Roblox install on every launch.
+    pub modifications: PathBuf,
     pub state_file: PathBuf,
     pub settings_file: PathBuf,
 }
@@ -20,6 +22,7 @@ impl Paths {
             downloads: base.join("Downloads"),
             versions: base.join("Versions"),
             logs: base.join("Logs"),
+            modifications: base.join("Modifications"),
             state_file: base.join("State.json"),
             settings_file: base.join("Settings.json"),
             base,
@@ -41,7 +44,13 @@ impl Paths {
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
-        for dir in [&self.base, &self.downloads, &self.versions, &self.logs] {
+        for dir in [
+            &self.base,
+            &self.downloads,
+            &self.versions,
+            &self.logs,
+            &self.modifications,
+        ] {
             std::fs::create_dir_all(dir)?;
         }
         Ok(())

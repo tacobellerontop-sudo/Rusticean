@@ -74,8 +74,11 @@ pub fn run(paths: Paths, opts: LaunchOptions) -> anyhow::Result<bool> {
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx);
             // launching while Roblox is open closes the running game, so ask first
+            // with multi-instance on, the running game stays open, so there's nothing to ask
+            let settings = Settings::load(&paths.settings_file);
             let confirm = !opts.no_launch
-                && Settings::load(&paths.settings_file).confirm_launches
+                && settings.confirm_launches
+                && !settings.multi_instance
                 && rbx_win::sync::is_roblox_running();
             let mut app = BootstrapperApp {
                 shared: app_shared,

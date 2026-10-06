@@ -81,3 +81,31 @@ pub fn write_channel(registry_name: &str, channel: &str) -> io::Result<()> {
 pub fn write_channel(_registry_name: &str, _channel: &str) -> io::Result<()> {
     Ok(())
 }
+
+const COMPAT_LAYERS: &str = r"Software\Microsoft\Windows NT\CurrentVersion\AppCompatFlags\Layers";
+const NO_FSO: &str = "~ DISABLEDXMAXIMIZEDWINDOWEDMODE";
+
+/// Turn Windows' fullscreen optimizations on or off for `exe`, the same as the
+/// checkbox in its Properties > Compatibility tab.
+#[cfg(windows)]
+pub fn set_fullscreen_optimizations(exe: &Path, enabled: bool) -> io::Result<()> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(COMPAT_LAYERS)?;
+    let name = exe.display().to_string();
+    if enabled {
+        match key.delete_value(&name) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        }
+    } else {
+        key.set_value(&name, &NO_FSO)
+    }
+}
+
+#[cfg(not(windows))]
+pub fn set_fullscreen_optimizations(_exe: &Path, _enabled: bool) -> io::Result<()> {
+    let _ = (COMPAT_LAYERS, NO_FSO);
+    Ok(())
+}

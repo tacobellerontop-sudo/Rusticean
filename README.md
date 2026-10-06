@@ -26,11 +26,18 @@ that, clicking **Play** on roblox.com goes through it.
 Settings (saved to `Settings.json`):
 
 - **Launch:** progress window on/off, ask before closing a running Roblox, process priority,
-  automatic updates (off pins the installed version), release channel.
+  automatic updates (off pins the installed version), disable fullscreen optimizations,
+  release channel.
 - **FastFlags:** frame-rate cap, graphics API, anti-aliasing, texture quality, remove grass,
   exclusive fullscreen, and custom flags. They're written to the version's
   `ClientSettings/ClientAppSettings.json` on every launch.
+- **Mods:** files in `%LOCALAPPDATA%\robloxbootstrapper\Modifications` are copied over the
+  Roblox install on every launch (e.g. `content/sounds/ouch.ogg`). Removing a file restores
+  the original.
 - **Storage:** delete old downloads and logs automatically or on demand, reinstall Roblox.
+- **Risky** (off by default; may get an account warned or banned): multiple Roblox windows,
+  anti-AFK, fullbright. Multi-instance and anti-AFK keep a small background helper running
+  until every Roblox window is closed.
 
 Some of these come from the Bloxstrap forks [Voidstrap](https://github.com/voldstrap/Voidstrap)
 and [Fishstrap](https://github.com/fishstrap/fishstrap).

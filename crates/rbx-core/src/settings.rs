@@ -231,6 +231,17 @@ pub struct Settings {
     pub disable_grass: bool,
     /// Make Alt+Enter switch to real (exclusive) fullscreen instead of a borderless window.
     pub exclusive_fullscreen: bool,
+    /// Windows' "disable fullscreen optimizations" compatibility flag on RobloxPlayerBeta.exe.
+    pub disable_fullscreen_optimizations: bool,
+
+    // Risky: these can get an account warned or banned. Off by default.
+    /// Hold Roblox's single-instance mutex so several clients can run at once.
+    pub multi_instance: bool,
+    /// Press a key in Roblox every few minutes so it doesn't kick you for being idle.
+    pub anti_afk: bool,
+    /// Remove the lighting lookup texture so everything renders fully lit.
+    pub fullbright: bool,
+
     /// Extra FastFlags added by hand. Presets above win if they set the same flag.
     pub fast_flags: BTreeMap<String, Value>,
 }
@@ -250,6 +261,10 @@ impl Default for Settings {
             texture_quality: TextureQuality::Automatic,
             disable_grass: false,
             exclusive_fullscreen: false,
+            disable_fullscreen_optimizations: false,
+            multi_instance: false,
+            anti_afk: false,
+            fullbright: false,
             fast_flags: BTreeMap::new(),
         }
     }
