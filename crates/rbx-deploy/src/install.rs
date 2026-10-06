@@ -1,6 +1,6 @@
 //! Downloading, verifying and extracting a Roblox version's packages into a version folder.
 
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -275,20 +275,17 @@ async fn hash_matches(path: &Path, expected: &str) -> bool {
     }
 }
 
-/// Turn a zip entry name (Roblox zips use `\` separators) into a safe relative path.
+/// Turn a zip entry name into a safe relative path. Roblox zips use `\\` separators and
+/// some entries start with one (e.g. `\\ExtraContent\\...`), so leading and repeated
+/// separators are ignored; `..` and drive letters are refused.
 fn sanitize_entry(name: &str) -> Option<PathBuf> {
-    let normalized = name.replace('\\', "/");
     let mut out = PathBuf::new();
-    for component in Path::new(&normalized).components() {
-        match component {
-            Component::Normal(part) => {
-                if part.to_string_lossy().contains(':') {
-                    return None;
-                }
-                out.push(part);
-            }
-            Component::CurDir => {}
-            _ => return None,
+    for part in name.split(['\\', '/']) {
+        match part {
+            "" | "." => {}
+            ".." => return None,
+            _ if part.contains(':') => return None,
+            _ => out.push(part),
         }
     }
     Some(out)
@@ -309,7 +306,7 @@ pub fn extract_zip(zip_path: &Path, dest: &Path) -> std::result::Result<(), Stri
         };
         let out = dest.join(&rel);
 
-        if raw_name.ends_with('/') || raw_name.ends_with('\\') {
+        if rel.as_os_str().is_empty() || raw_name.ends_with('/') || raw_name.ends_with('\\') {
             std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
             continue;
         }
@@ -337,7 +334,15 @@ mod tests {
         );
         assert_eq!(sanitize_entry("./a.txt"), Some(PathBuf::from("a.txt")));
         assert_eq!(sanitize_entry("..\\evil.dll"), None);
-        assert_eq!(sanitize_entry("/etc/passwd"), None);
+        assert_eq!(
+            sanitize_entry("\\ExtraContent\\a.png"),
+            Some(PathBuf::from("ExtraContent/a.png"))
+        );
+        assert_eq!(
+            sanitize_entry("content//fonts\\\\b.ttf"),
+            Some(PathBuf::from("content/fonts/b.ttf"))
+        );
+        assert_eq!(sanitize_entry("a/../../evil"), None);
         assert_eq!(sanitize_entry("C:\\Windows\\x"), None);
     }
 
@@ -352,11 +357,15 @@ mod tests {
             w.write_all(b"hi").unwrap();
             w.start_file("top.txt", opts).unwrap();
             w.write_all(b"top").unwrap();
+            w.add_directory("\\lead\\", opts).unwrap();
+            w.start_file("\\lead\\x.txt", opts).unwrap();
+            w.write_all(b"x").unwrap();
             w.finish().unwrap();
         }
         let dest = dir.path().join("out");
         extract_zip(&zip_path, &dest).unwrap();
         assert_eq!(std::fs::read(dest.join("sub/file.txt")).unwrap(), b"hi");
         assert_eq!(std::fs::read(dest.join("top.txt")).unwrap(), b"top");
+        assert_eq!(std::fs::read(dest.join("lead/x.txt")).unwrap(), b"x");
     }
 }
