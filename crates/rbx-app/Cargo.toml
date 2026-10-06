@@ -6,9 +6,11 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
 rbx-core = { version = "0.1.0", path = "../rbx-core" }
 rbx-deploy = { version = "0.1.0", path = "../rbx-deploy" }
 rbx-win = { version = "0.1.0", path = "../rbx-win" }
+serde_json = "1.0.151"
 tokio = { version = "1.53.2", features = ["rt", "macros"] }
 tracing = "0.1.44"
 tracing-appender = "0.2.5"

@@ -2,14 +2,15 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use rbx_deploy::install::{InstallJob, ProgressFn};
+use rbx_deploy::install::{InstallJob, Progress};
 use rbx_deploy::{BinaryType, cdn, manifest, reqwest, version};
 
 use crate::channel;
 use crate::paths::{APP_NAME, Paths};
+use crate::settings::{self, Settings};
 use crate::state::State;
 
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +32,23 @@ fn io_err(context: impl Into<String>) -> impl FnOnce(std::io::Error) -> Error {
         source,
     }
 }
+
+/// What the bootstrapper is doing, for a UI to display.
+#[derive(Debug, Clone)]
+pub enum Status {
+    Connecting,
+    CheckingForUpdates,
+    /// Downloading or extracting a new version.
+    Installing {
+        upgrading: bool,
+        progress: Progress,
+    },
+    Starting,
+    /// Roblox is running (or, with `no_launch`, installed); the UI can close.
+    Finished,
+}
+
+pub type StatusFn = Arc<dyn Fn(Status) + Send + Sync>;
 
 /// What the user (or the browser, via the protocol handler) asked for.
 #[derive(Debug, Clone, Default)]
@@ -57,11 +75,23 @@ pub fn http_client() -> reqwest::Result<reqwest::Client> {
 }
 
 /// Make sure the latest Roblox Player is installed, then start it.
+///
+/// Setting `cancel` stops at the next safe point and returns `rbx_deploy::Error::Cancelled`.
 pub async fn run(
     paths: &Paths,
     opts: &LaunchOptions,
-    on_progress: ProgressFn,
+    on_status: StatusFn,
+    cancel: Arc<AtomicBool>,
 ) -> Result<(), Error> {
+    let check_cancel = || {
+        if cancel.load(Ordering::Relaxed) {
+            Err(Error::Deploy(rbx_deploy::Error::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+
+    on_status(Status::Connecting);
     paths
         .ensure_dirs()
         .map_err(io_err("creating data folders"))?;
@@ -75,15 +105,19 @@ pub async fn run(
 
     // state may have changed while we waited for another instance
     let mut state = State::load(&paths.state_file);
+    let settings = Settings::load(&paths.settings_file);
     let client = http_client().map_err(rbx_deploy::Error::from)?;
     let mirror = cdn::find_mirror(&client).await?;
+    check_cancel()?;
+
+    on_status(Status::CheckingForUpdates);
 
     let version_guid = match &opts.version_guid {
         Some(guid) => {
             tracing::info!(%guid, "version set from arguments");
             guid.clone()
         }
-        None => latest_version_guid(&client, opts).await?,
+        None => latest_version_guid(&client, opts, &settings).await?,
     };
 
     let version_dir = paths.version_dir(&version_guid);
@@ -92,6 +126,7 @@ pub async fn run(
     let installed = state.player.version_guid.as_deref() == Some(version_guid.as_str());
     if opts.force || !installed || !exe.exists() {
         tracing::info!(%version_guid, "installing");
+        check_cancel()?;
 
         let manifest_text = client
             .get(mirror.package_manifest_url(&version_guid))
@@ -112,8 +147,17 @@ pub async fn run(
             downloads_dir: paths.downloads.clone(),
             version_dir: version_dir.clone(),
             stock_downloads_dir: Paths::stock_downloads(),
-            on_progress,
-            cancel: Arc::new(AtomicBool::new(false)),
+            on_progress: {
+                let on_status = on_status.clone();
+                let upgrading = state.player.version_guid.is_some();
+                Arc::new(move |progress| {
+                    on_status(Status::Installing {
+                        upgrading,
+                        progress,
+                    })
+                })
+            },
+            cancel: cancel.clone(),
         }
         .run()
         .await?;
@@ -128,18 +172,26 @@ pub async fn run(
         tracing::info!(%version_guid, "already up to date");
     }
 
+    // FastFlags are rewritten every launch so settings changes apply without a reinstall
+    settings::write_client_settings(&version_dir, &settings.effective_fast_flags())
+        .map_err(io_err("writing ClientAppSettings.json"))?;
+
     if !opts.no_launch {
+        check_cancel()?;
+        on_status(Status::Starting);
         start_roblox(&exe, &version_dir, &opts.launch_args)?;
     }
+    on_status(Status::Finished);
     Ok(())
 }
 
 async fn latest_version_guid(
     client: &reqwest::Client,
     opts: &LaunchOptions,
+    settings: &Settings,
 ) -> Result<String, Error> {
     let mut channel = channel::resolve(
-        opts.channel.as_deref(),
+        opts.channel.as_deref().or(settings.channel.as_deref()),
         &opts.launch_args,
         rbx_win::registry::read_channel(BINARY.registry_name()),
     );
