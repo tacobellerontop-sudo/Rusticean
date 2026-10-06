@@ -3,6 +3,7 @@
 
 pub mod afk;
 pub mod dialog;
+pub mod notify;
 pub mod process;
 pub mod registry;
 pub mod sync;

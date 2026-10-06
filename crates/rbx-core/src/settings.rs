@@ -206,6 +206,94 @@ impl CleanupAge {
     }
 }
 
+/// A settings dropdown: an enum with a label per variant, defaulting to the first one.
+macro_rules! choice {
+    ($(#[$meta:meta])* $name:ident { $($variant:ident => $label:expr),+ $(,)? }) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum $name { $($variant),+ }
+
+        impl $name {
+            pub const ALL: &'static [$name] = &[$($name::$variant),+];
+
+            pub fn label(self) -> &'static str {
+                match self { $($name::$variant => $label),+ }
+            }
+        }
+
+        impl Default for $name {
+            fn default() -> Self {
+                Self::ALL[0]
+            }
+        }
+    };
+}
+
+choice! {
+    /// Bloxstrap's classic cursor presets.
+    CursorStyle { Default => "Default", From2013 => "2013 (Angular)", From2006 => "2006 (Cartoony)" }
+}
+
+choice! {
+    /// Emoji fonts from bloxstraplabs/rbxcustom-fontemojis.
+    EmojiStyle {
+        Default => "Default (Twemoji)",
+        Catmoji => "Catmoji",
+        Windows11 => "Windows 11",
+        Windows10 => "Windows 10",
+        Windows8 => "Windows 8",
+    }
+}
+
+const EMOJI_BASE: &str = "https://github.com/bloxstraplabs/rbxcustom-fontemojis/releases/download/my-phone-is-78-percent/";
+
+impl EmojiStyle {
+    /// Download URL for the font, `None` for Roblox's own.
+    pub fn url(self) -> Option<String> {
+        let file = match self {
+            EmojiStyle::Default => return None,
+            EmojiStyle::Catmoji => "Catmoji.ttf",
+            EmojiStyle::Windows11 => "Win1122H2SegoeUIEmoji.ttf",
+            EmojiStyle::Windows10 => "Win10April2018SegoeUIEmoji.ttf",
+            EmojiStyle::Windows8 => "Win8.1SegoeUIEmoji.ttf",
+        };
+        Some(format!("{EMOJI_BASE}{file}"))
+    }
+}
+
+choice! {
+    Theme { Dark => "Dark", Light => "Light", System => "System default" }
+}
+
+choice! {
+    /// How the progress window looks.
+    BootstrapperStyle {
+        Rusticean => "Rusticean",
+        Compact => "Compact",
+        Classic => "Classic dialog",
+    }
+}
+
+choice! {
+    BootstrapperIcon {
+        Rusticean => "Rusticean",
+        Outline => "Rusticean outline",
+        Mono => "Rusticean mono",
+        Custom => "Custom",
+    }
+}
+
+/// Another program to start alongside Roblox (Bloxstrap's custom integrations).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct CustomIntegration {
+    pub name: String,
+    pub path: String,
+    pub args: String,
+    /// Close it again when Roblox closes.
+    pub auto_close: bool,
+}
+
 const FPS_FLAG: &str = "DFIntTaskSchedulerTargetFps";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -242,6 +330,45 @@ pub struct Settings {
     /// Remove the lighting lookup texture so everything renders fully lit.
     pub fullbright: bool,
 
+    // Integrations
+    /// Read Roblox's log to know which game you're in. Needed by the options below.
+    pub activity_tracking: bool,
+    /// Show a notification with the server's location when you join.
+    pub server_location: bool,
+    /// Close Roblox when you leave a game instead of going back to the desktop app.
+    pub close_on_leave: bool,
+    /// Show the game you're playing on your Discord profile.
+    pub discord_presence: bool,
+    /// Add a "Join server" button to the Discord activity.
+    pub discord_join_button: bool,
+    /// Show your Roblox avatar and name on the Discord activity.
+    pub discord_show_account: bool,
+    pub custom_integrations: Vec<CustomIntegration>,
+
+    // Mod presets
+    pub cursor: CursorStyle,
+    pub old_avatar_background: bool,
+    pub old_character_sounds: bool,
+    pub emoji: EmojiStyle,
+    /// Original name of the font file copied into the data folder, if one is set.
+    pub custom_font: Option<String>,
+    /// Windows' "override high DPI scaling" compatibility option on Roblox.
+    pub dpi_override: bool,
+
+    // Engine
+    /// Off leaves ClientAppSettings.json alone entirely.
+    pub manage_fast_flags: bool,
+    /// Keep Roblox rendering at full resolution when Windows display scaling is above 100%.
+    pub preserve_rendering_quality: bool,
+
+    // Appearance
+    pub theme: Theme,
+    pub bootstrapper_style: BootstrapperStyle,
+    pub bootstrapper_icon: BootstrapperIcon,
+    /// Path to a .png or .ico for [`BootstrapperIcon::Custom`].
+    pub custom_icon: Option<String>,
+    pub bootstrapper_title: String,
+
     /// Extra FastFlags added by hand. Presets above win if they set the same flag.
     pub fast_flags: BTreeMap<String, Value>,
 }
@@ -265,6 +392,26 @@ impl Default for Settings {
             multi_instance: false,
             anti_afk: false,
             fullbright: false,
+            activity_tracking: true,
+            server_location: false,
+            close_on_leave: false,
+            discord_presence: true,
+            discord_join_button: false,
+            discord_show_account: false,
+            custom_integrations: Vec::new(),
+            cursor: CursorStyle::default(),
+            old_avatar_background: false,
+            old_character_sounds: false,
+            emoji: EmojiStyle::default(),
+            custom_font: None,
+            dpi_override: false,
+            manage_fast_flags: true,
+            preserve_rendering_quality: false,
+            theme: Theme::default(),
+            bootstrapper_style: BootstrapperStyle::default(),
+            bootstrapper_icon: BootstrapperIcon::default(),
+            custom_icon: None,
+            bootstrapper_title: "Rusticean".into(),
             fast_flags: BTreeMap::new(),
         }
     }
@@ -321,6 +468,9 @@ impl Settings {
             ] {
                 flags.insert(flag.into(), Value::from(0));
             }
+        }
+        if self.preserve_rendering_quality {
+            flags.insert("DFFlagDisableDPIScale".into(), Value::from(true));
         }
         if self.exclusive_fullscreen {
             flags.insert(

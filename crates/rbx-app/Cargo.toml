@@ -6,7 +6,10 @@ license.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+dirs = "7"
+discord-rich-presence = "1.1.0"
 eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "wayland", "x11"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "ico"] }
 rbx-core = { version = "0.1.0", path = "../rbx-core" }
 rbx-deploy = { version = "0.1.0", path = "../rbx-deploy" }
 rbx-win = { version = "0.1.0", path = "../rbx-win" }
@@ -22,3 +25,6 @@ path = "src/main.rs"
 
 [build-dependencies]
 winresource = "0.1.31"
+
+[target."cfg(windows)".dependencies]
+rfd = "0.15"

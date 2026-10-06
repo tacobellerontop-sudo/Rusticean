@@ -4,7 +4,7 @@
 //!
 //! Also Voidstrap's fullbright, which hides the lighting lookup texture.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -13,14 +13,21 @@ const BACKUP_DIR: &str = ".rusticean-originals";
 /// The list of files we put in the version folder last time.
 const APPLIED_LIST: &str = ".rusticean-mods.json";
 
-/// Copy every file in `mods_dir` into `version_dir` and undo mods that were removed.
-/// Returns how many mod files are applied.
-pub fn apply(mods_dir: &Path, version_dir: &Path) -> io::Result<usize> {
+/// Copy every file in `sources` into `version_dir` (a later folder wins when two have
+/// the same file) and undo mods that were removed. Returns how many files are applied.
+pub fn apply(sources: &[&Path], version_dir: &Path) -> io::Result<usize> {
     let backup_dir = version_dir.join(BACKUP_DIR);
     let list_file = version_dir.join(APPLIED_LIST);
 
-    let mut current = BTreeSet::new();
-    collect_files(mods_dir, mods_dir, &mut current)?;
+    let mut origin = BTreeMap::new();
+    for dir in sources {
+        let mut files = BTreeSet::new();
+        collect_files(dir, dir, &mut files)?;
+        for rel in files {
+            origin.insert(rel, *dir);
+        }
+    }
+    let current: BTreeSet<String> = origin.keys().cloned().collect();
     let previous: BTreeSet<String> = std::fs::read_to_string(&list_file)
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
@@ -49,7 +56,7 @@ pub fn apply(mods_dir: &Path, version_dir: &Path) -> io::Result<usize> {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::copy(mods_dir.join(rel), &target)?;
+        std::fs::copy(origin[rel].join(rel), &target)?;
     }
 
     let list = serde_json::to_string(&current).map_err(io::Error::other)?;
@@ -149,19 +156,19 @@ mod tests {
         write(&mods.join("content/sounds/ouch.ogg"), "oof");
         write(&mods.join("content/extra.txt"), "new");
 
-        assert_eq!(apply(&mods, &version).unwrap(), 2);
+        assert_eq!(apply(&[&mods], &version).unwrap(), 2);
         assert_eq!(read(&sound), "oof");
         assert_eq!(read(&version.join("content/extra.txt")), "new");
 
         // applying again keeps the stock backup intact
-        apply(&mods, &version).unwrap();
+        apply(&[&mods], &version).unwrap();
         assert_eq!(
             read(&version.join(BACKUP_DIR).join("content/sounds/ouch.ogg")),
             "stock"
         );
 
         std::fs::remove_dir_all(&mods).unwrap();
-        assert_eq!(apply(&mods, &version).unwrap(), 0);
+        assert_eq!(apply(&[&mods], &version).unwrap(), 0);
         assert_eq!(read(&sound), "stock");
         assert!(!version.join("content/extra.txt").exists());
     }
