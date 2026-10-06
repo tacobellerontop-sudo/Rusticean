@@ -7,6 +7,8 @@ use rbx_core::LaunchOptions;
 pub enum Command {
     /// Install/update the player and launch it.
     Player(Options),
+    /// Open the settings window (the default when run with no arguments).
+    Settings,
     Help,
 }
 
@@ -17,6 +19,8 @@ pub struct Options {
     pub version_guid: Option<String>,
     pub force: bool,
     pub no_launch: bool,
+    /// No window: errors only go to the log and a message box.
+    pub quiet: bool,
 }
 
 impl From<Options> for LaunchOptions {
@@ -39,6 +43,7 @@ fn is_roblox_uri(arg: &str) -> bool {
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String> {
     let mut args = args.into_iter().peekable();
     let mut opts = Options::default();
+    let mut any_player_arg = false;
 
     // value of a flag: the next argument, unless it's another flag
     fn value(args: &mut std::iter::Peekable<impl Iterator<Item = String>>) -> Option<String> {
@@ -48,6 +53,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     while let Some(arg) = args.next() {
         if is_roblox_uri(&arg) {
             opts.launch_args = arg;
+            any_player_arg = true;
             continue;
         }
 
@@ -55,7 +61,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             return Err(format!("unexpected argument '{arg}'"));
         };
 
-        match flag.to_ascii_lowercase().as_str() {
+        let flag = flag.to_ascii_lowercase();
+        if matches!(flag.as_str(), "settings" | "menu" | "preferences") {
+            return Ok(Command::Settings);
+        }
+        any_player_arg = true;
+
+        match flag.as_str() {
             "player" => opts.launch_args = value(&mut args).unwrap_or_default(),
             "channel" => {
                 opts.channel = Some(value(&mut args).ok_or("-channel needs a channel name")?)
@@ -65,29 +77,36 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
             }
             "force" => opts.force = true,
             "nolaunch" => opts.no_launch = true,
+            "quiet" => opts.quiet = true,
             "help" | "h" | "?" | "-help" => return Ok(Command::Help),
             other => return Err(format!("unknown flag '-{other}'")),
         }
     }
 
-    Ok(Command::Player(opts))
+    if any_player_arg {
+        Ok(Command::Player(opts))
+    } else {
+        Ok(Command::Settings)
+    }
 }
 
 pub const USAGE: &str = "\
 robloxbootstrapper: installs, updates and launches Roblox
 
 USAGE:
-    robloxbootstrapper [-player [<roblox-player: URI>]] [FLAGS]
+    robloxbootstrapper                      Open settings
+    robloxbootstrapper -player [URI] [FLAGS]  Install/update Roblox and launch it
 
-With no arguments, installs or updates Roblox and opens the Roblox app.
-Running it also registers it as the handler for roblox:// and roblox-player:// links.
+Launching also registers it as the handler for roblox:// and roblox-player:// links.
 
 FLAGS:
     -player [URI]      Launch the player, optionally with a roblox-player: URI
+    -settings          Open the settings window
     -channel <name>    Use this deployment channel instead of the default
     -version <guid>    Install this exact version (e.g. version-1a2b3c4d5e6f7a8b)
     -force             Reinstall even if the version is already present
     -nolaunch          Install or update, but don't start Roblox
+    -quiet             Don't show the progress window
     -help              Show this message
 ";
 
@@ -100,8 +119,10 @@ mod tests {
     }
 
     #[test]
-    fn no_args_launches_app() {
-        assert_eq!(p(&[]), Ok(Command::Player(Options::default())));
+    fn no_args_opens_settings() {
+        assert_eq!(p(&[]), Ok(Command::Settings));
+        assert_eq!(p(&["-settings"]), Ok(Command::Settings));
+        assert_eq!(p(&["-player"]), Ok(Command::Player(Options::default())));
     }
 
     #[test]
@@ -121,12 +142,13 @@ mod tests {
             "ZBeta",
             "-force",
             "-nolaunch",
+            "-quiet",
         ]) else {
             panic!()
         };
         assert_eq!(o.launch_args, "roblox-player:1");
         assert_eq!(o.channel.as_deref(), Some("ZBeta"));
-        assert!(o.force && o.no_launch);
+        assert!(o.force && o.no_launch && o.quiet);
     }
 
     #[test]

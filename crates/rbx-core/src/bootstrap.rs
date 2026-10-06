@@ -2,14 +2,17 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use rbx_deploy::install::{InstallJob, ProgressFn};
+use rbx_deploy::install::{InstallJob, Progress};
 use rbx_deploy::{BinaryType, cdn, manifest, reqwest, version};
 
 use crate::channel;
+use crate::cleanup;
+use crate::mods;
 use crate::paths::{APP_NAME, Paths};
+use crate::settings::{self, ProcessPriority, Settings};
 use crate::state::State;
 
 #[derive(Debug, thiserror::Error)]
@@ -31,6 +34,23 @@ fn io_err(context: impl Into<String>) -> impl FnOnce(std::io::Error) -> Error {
         source,
     }
 }
+
+/// What the bootstrapper is doing, for a UI to display.
+#[derive(Debug, Clone)]
+pub enum Status {
+    Connecting,
+    CheckingForUpdates,
+    /// Downloading or extracting a new version.
+    Installing {
+        upgrading: bool,
+        progress: Progress,
+    },
+    Starting,
+    /// Roblox is running (or, with `no_launch`, installed); the UI can close.
+    Finished,
+}
+
+pub type StatusFn = Arc<dyn Fn(Status) + Send + Sync>;
 
 /// What the user (or the browser, via the protocol handler) asked for.
 #[derive(Debug, Clone, Default)]
@@ -57,11 +77,23 @@ pub fn http_client() -> reqwest::Result<reqwest::Client> {
 }
 
 /// Make sure the latest Roblox Player is installed, then start it.
+///
+/// Setting `cancel` stops at the next safe point and returns `rbx_deploy::Error::Cancelled`.
 pub async fn run(
     paths: &Paths,
     opts: &LaunchOptions,
-    on_progress: ProgressFn,
+    on_status: StatusFn,
+    cancel: Arc<AtomicBool>,
 ) -> Result<(), Error> {
+    let check_cancel = || {
+        if cancel.load(Ordering::Relaxed) {
+            Err(Error::Deploy(rbx_deploy::Error::Cancelled))
+        } else {
+            Ok(())
+        }
+    };
+
+    on_status(Status::Connecting);
     paths
         .ensure_dirs()
         .map_err(io_err("creating data folders"))?;
@@ -75,16 +107,34 @@ pub async fn run(
 
     // state may have changed while we waited for another instance
     let mut state = State::load(&paths.state_file);
+    let settings = Settings::load(&paths.settings_file);
     let client = http_client().map_err(rbx_deploy::Error::from)?;
-    let mirror = cdn::find_mirror(&client).await?;
 
-    let version_guid = match &opts.version_guid {
-        Some(guid) => {
+    // with auto-update off, launch what's installed without asking Roblox for anything
+    let pinned = (!settings.auto_update && !opts.force && opts.version_guid.is_none())
+        .then(|| state.player.version_guid.clone())
+        .flatten()
+        .filter(|guid| {
+            paths
+                .version_dir(guid)
+                .join(BINARY.executable_name())
+                .exists()
+        });
+
+    on_status(Status::CheckingForUpdates);
+
+    let version_guid = match (&opts.version_guid, pinned) {
+        (Some(guid), _) => {
             tracing::info!(%guid, "version set from arguments");
             guid.clone()
         }
-        None => latest_version_guid(&client, opts).await?,
+        (None, Some(guid)) => {
+            tracing::info!(%guid, "auto-update is off, launching the installed version");
+            guid
+        }
+        (None, None) => latest_version_guid(&client, opts, &settings).await?,
     };
+    check_cancel()?;
 
     let version_dir = paths.version_dir(&version_guid);
     let exe = version_dir.join(BINARY.executable_name());
@@ -92,6 +142,8 @@ pub async fn run(
     let installed = state.player.version_guid.as_deref() == Some(version_guid.as_str());
     if opts.force || !installed || !exe.exists() {
         tracing::info!(%version_guid, "installing");
+        let mirror = cdn::find_mirror(&client).await?;
+        check_cancel()?;
 
         let manifest_text = client
             .get(mirror.package_manifest_url(&version_guid))
@@ -112,8 +164,17 @@ pub async fn run(
             downloads_dir: paths.downloads.clone(),
             version_dir: version_dir.clone(),
             stock_downloads_dir: Paths::stock_downloads(),
-            on_progress,
-            cancel: Arc::new(AtomicBool::new(false)),
+            on_progress: {
+                let on_status = on_status.clone();
+                let upgrading = state.player.version_guid.is_some();
+                Arc::new(move |progress| {
+                    on_status(Status::Installing {
+                        upgrading,
+                        progress,
+                    })
+                })
+            },
+            cancel: cancel.clone(),
         }
         .run()
         .await?;
@@ -128,8 +189,46 @@ pub async fn run(
         tracing::info!(%version_guid, "already up to date");
     }
 
+    // FastFlags are rewritten every launch so settings changes apply without a reinstall
+    settings::write_client_settings(&version_dir, &settings.effective_fast_flags())
+        .map_err(io_err("writing ClientAppSettings.json"))?;
+
+    // a broken mod shouldn't stop the game from starting
+    match mods::apply(&paths.modifications, &version_dir) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!(files = n, "applied modifications"),
+        Err(e) => tracing::warn!(error = %e, "could not apply modifications"),
+    }
+    if let Err(e) = mods::set_fullbright(&version_dir, settings.fullbright) {
+        tracing::warn!(error = %e, "could not change fullbright");
+    }
+    if let Err(e) = rbx_win::registry::set_fullscreen_optimizations(
+        &exe,
+        !settings.disable_fullscreen_optimizations,
+    ) {
+        tracing::warn!(error = %e, "could not set fullscreen optimizations");
+    }
+
     if !opts.no_launch {
-        start_roblox(&exe, &version_dir, &opts.launch_args)?;
+        check_cancel()?;
+        on_status(Status::Starting);
+        start_roblox(
+            &exe,
+            &version_dir,
+            &opts.launch_args,
+            settings.process_priority,
+        )?;
+    }
+    on_status(Status::Finished);
+
+    // housekeeping after Roblox is up, so it never delays the launch
+    if let Some(max_age) = settings.cleanup.max_age() {
+        let report = cleanup::run(paths, max_age);
+        tracing::info!(
+            files = report.files,
+            bytes = report.bytes,
+            "cleaned up old files"
+        );
     }
     Ok(())
 }
@@ -137,9 +236,10 @@ pub async fn run(
 async fn latest_version_guid(
     client: &reqwest::Client,
     opts: &LaunchOptions,
+    settings: &Settings,
 ) -> Result<String, Error> {
     let mut channel = channel::resolve(
-        opts.channel.as_deref(),
+        opts.channel.as_deref().or(settings.channel.as_deref()),
         &opts.launch_args,
         rbx_win::registry::read_channel(BINARY.registry_name()),
     );
@@ -194,12 +294,26 @@ fn cleanup_old_versions(paths: &Paths, keep: &str) {
     }
 }
 
-fn start_roblox(exe: &Path, working_dir: &Path, launch_args: &str) -> Result<(), Error> {
+fn start_roblox(
+    exe: &Path,
+    working_dir: &Path,
+    launch_args: &str,
+    priority: ProcessPriority,
+) -> Result<(), Error> {
     let mut command = std::process::Command::new(exe);
     command.current_dir(working_dir);
     if !launch_args.is_empty() {
         command.arg(launch_args);
     }
+
+    // set at creation, so we never need a handle to the running game to change it
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(priority.creation_flag());
+    }
+    #[cfg(not(windows))]
+    let _ = priority;
 
     // drop the child (and its process handle) immediately: Roblox's anti-cheat
     // trips if a launcher keeps a handle open to it

@@ -2,13 +2,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod cli;
+mod companion;
+mod ui;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::Context;
-use rbx_core::Paths;
-use rbx_deploy::install::{Progress, Stage};
+use rbx_core::{LaunchOptions, Paths, Settings, Status, StatusFn};
+use rbx_deploy::install::Stage;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
@@ -23,10 +25,10 @@ fn main() {
         }
     };
 
-    let cli::Command::Player(opts) = command else {
+    if command == cli::Command::Help {
         println!("{}", cli::USAGE);
         return;
-    };
+    }
 
     let paths = match Paths::default_base() {
         Some(base) => Paths::new(base),
@@ -40,13 +42,21 @@ fn main() {
     let log_guard = init_logging(&paths);
     std::panic::set_hook(Box::new(|info| tracing::error!("panic: {info}")));
 
-    let result = std::panic::catch_unwind(|| run(&paths, opts))
+    let result = std::panic::catch_unwind(|| run(&paths, command))
         .unwrap_or_else(|_| Err(anyhow::anyhow!("the bootstrapper crashed (see the log)")));
 
-    if let Err(e) = result {
-        tracing::error!("{e:#}");
-        drop(log_guard);
-        fail(e);
+    match result {
+        Ok(true) => {}
+        // already shown in the window
+        Ok(false) => {
+            drop(log_guard);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            tracing::error!("{e:#}");
+            drop(log_guard);
+            fail(e);
+        }
     }
 }
 
@@ -55,8 +65,9 @@ fn fail(e: anyhow::Error) -> ! {
     std::process::exit(1);
 }
 
-fn run(paths: &Paths, opts: cli::Options) -> anyhow::Result<()> {
-    tracing::info!(version = env!("CARGO_PKG_VERSION"), ?opts, "starting");
+/// Returns `Ok(false)` for a failure the window has already shown.
+fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), ?command, "starting");
 
     // re-point roblox:// links at this exe on every run, in case the stock launcher took them back
     match std::env::current_exe() {
@@ -68,30 +79,77 @@ fn run(paths: &Paths, opts: cli::Options) -> anyhow::Result<()> {
         Err(e) => tracing::warn!(error = %e, "could not find our own path"),
     }
 
+    let opts = match command {
+        cli::Command::Player(opts) => opts,
+        cli::Command::Settings => {
+            if !ui::settings::run(paths.clone())? {
+                return Ok(true);
+            }
+            cli::Options::default()
+        }
+        cli::Command::Help => return Ok(true),
+    };
+    launch(paths, opts)
+}
+
+fn launch(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
+    let settings = Settings::load(&paths.settings_file);
+    let show_window = !opts.quiet && settings.show_progress_window;
+    let opts: LaunchOptions = opts.into();
+
+    // set up before Roblox starts: multi-instance only works if we hold its mutex first
+    let companion = (!opts.no_launch)
+        .then(|| companion::Companion::prepare(&settings))
+        .flatten();
+
+    let success = bootstrap(paths, &opts, show_window)?;
+    if success && let Some(companion) = companion {
+        companion.run();
+    }
+    Ok(success)
+}
+
+fn bootstrap(paths: &Paths, opts: &LaunchOptions, show_window: bool) -> anyhow::Result<bool> {
+    if show_window {
+        match ui::bootstrapper::run(paths.clone(), opts.clone()) {
+            Ok(success) => return Ok(success),
+            Err(e) => tracing::warn!("{e:#}; continuing without a window"),
+        }
+    }
+
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .context("starting async runtime")?;
-
     runtime
-        .block_on(rbx_core::run(paths, &opts.into(), progress_logger()))
+        .block_on(rbx_core::run(
+            paths,
+            opts,
+            status_logger(),
+            Arc::new(AtomicBool::new(false)),
+        ))
         .context("bootstrapping Roblox")?;
-    Ok(())
+    Ok(true)
 }
 
-/// Log progress in 10% steps until the real progress window exists.
-fn progress_logger() -> Arc<dyn Fn(Progress) + Send + Sync> {
+/// Progress for `-quiet` runs: status changes, and downloads in 10% steps.
+fn status_logger() -> StatusFn {
     let last_decile = AtomicU64::new(u64::MAX);
-    Arc::new(move |p: Progress| match p.stage {
-        Stage::Downloading { .. } if p.total > 0 => {
-            let decile = p.downloaded * 10 / p.total;
-            if last_decile.swap(decile, Ordering::Relaxed) != decile {
-                tracing::info!("downloading: {}%", decile * 10);
+    Arc::new(move |status: Status| match status {
+        Status::Installing { progress: p, .. } => match p.stage {
+            Stage::Downloading { .. } if p.total > 0 => {
+                let decile = p.downloaded * 10 / p.total;
+                if last_decile.swap(decile, Ordering::Relaxed) != decile {
+                    tracing::info!("downloading: {}%", decile * 10);
+                }
             }
-        }
-        Stage::Extracting { done, total } => tracing::info!("extracting: {done}/{total} packages"),
-        Stage::Done => tracing::info!("install finished"),
-        _ => {}
+            Stage::Extracting { done, total } => {
+                tracing::info!("extracting: {done}/{total} packages")
+            }
+            Stage::Done => tracing::info!("install finished"),
+            _ => {}
+        },
+        other => tracing::info!(status = ?other, "status"),
     })
 }
 

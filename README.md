@@ -16,14 +16,44 @@ cargo build --release
 
 The exe lands in `target/release/robloxbootstrapper.exe`. CI also uploads a build for every pull request.
 
-## Using it (Phase 1)
+## Using it
 
-Run `robloxbootstrapper.exe` once. It downloads the latest Roblox into
-`%LOCALAPPDATA%\robloxbootstrapper\Versions`, registers itself as the handler for
-`roblox://` and `roblox-player://` links, and opens Roblox. After that, clicking **Play**
-on roblox.com goes through it.
+Run `robloxbootstrapper.exe` to open its settings, then click **Launch Roblox**. That
+downloads the latest Roblox into `%LOCALAPPDATA%\robloxbootstrapper\Versions`, registers
+it as the handler for `roblox://` and `roblox-player://` links, and opens Roblox. After
+that, clicking **Play** on roblox.com goes through it.
 
-Flags: `-player [uri]`, `-channel <name>`, `-version <guid>`, `-force`, `-nolaunch`, `-help`.
+Settings (saved to `Settings.json`):
+
+- **Launch:** progress window on/off, ask before closing a running Roblox, process priority,
+  automatic updates (off pins the installed version), disable fullscreen optimizations,
+  release channel.
+- **FastFlags:** frame-rate cap, graphics API, anti-aliasing, texture quality, remove grass,
+  exclusive fullscreen, and custom flags. They're written to the version's
+  `ClientSettings/ClientAppSettings.json` on every launch.
+- **Mods:** files in `%LOCALAPPDATA%\robloxbootstrapper\Modifications` are copied over the
+  Roblox install on every launch (e.g. `content/sounds/ouch.ogg`). Removing a file restores
+  the original.
+- **Storage:** delete old downloads and logs automatically or on demand, reinstall Roblox.
+- **Risky** (off by default; may get an account warned or banned): multiple Roblox windows,
+  anti-AFK, fullbright. Multi-instance and anti-AFK keep a small background helper running
+  until every Roblox window is closed.
+
+Some of these come from the Bloxstrap forks [Voidstrap](https://github.com/voldstrap/Voidstrap)
+and [Fishstrap](https://github.com/fishstrap/fishstrap).
+
+A small window shows progress while Roblox downloads and starts, and explains any error.
+
+Flags: `-settings`, `-player [uri]`, `-channel <name>`, `-version <guid>`, `-force`, `-nolaunch`, `-quiet` (no window), `-help`.
 Logs are in `%LOCALAPPDATA%\robloxbootstrapper\Logs`.
 
 To go back to the stock launcher, reinstall Roblox from roblox.com.
+
+## Working on the UI
+
+Debug builds can play a fake install so the window can be tweaked without downloading Roblox:
+
+```
+RBXB_UI_PREVIEW=1 cargo run        # full install animation
+RBXB_UI_PREVIEW=error cargo run    # error screen
+```
