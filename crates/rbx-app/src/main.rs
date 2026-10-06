@@ -14,7 +14,7 @@ use rbx_deploy::install::Stage;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
-const TITLE: &str = "robloxbootstrapper";
+const TITLE: &str = "Rusticean";
 
 fn main() {
     let command = match cli::parse(std::env::args().skip(1)) {
@@ -34,6 +34,7 @@ fn main() {
         Some(base) => Paths::new(base),
         None => fail(anyhow::anyhow!("could not find %LOCALAPPDATA%")),
     };
+    paths.migrate_legacy();
     if let Err(e) = paths.ensure_dirs() {
         fail(anyhow::Error::new(e).context("creating data folders"));
     }
@@ -69,14 +70,16 @@ fn fail(e: anyhow::Error) -> ! {
 fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), ?command, "starting");
 
+    let exe = std::env::current_exe().context("finding our own path")?;
+    if command == cli::Command::Unregister {
+        rbx_win::registry::unregister_player_protocol(&exe)
+            .context("removing the roblox:// link handler")?;
+        return Ok(true);
+    }
+
     // re-point roblox:// links at this exe on every run, in case the stock launcher took them back
-    match std::env::current_exe() {
-        Ok(exe) => {
-            if let Err(e) = rbx_win::registry::register_player_protocol(&exe) {
-                tracing::warn!(error = %e, "could not register protocol handler");
-            }
-        }
-        Err(e) => tracing::warn!(error = %e, "could not find our own path"),
+    if let Err(e) = rbx_win::registry::register_player_protocol(&exe) {
+        tracing::warn!(error = %e, "could not register protocol handler");
     }
 
     let opts = match command {
@@ -87,7 +90,9 @@ fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
             }
             cli::Options::default()
         }
-        cli::Command::Help => return Ok(true),
+        cli::Command::Register | cli::Command::Unregister | cli::Command::Help => {
+            return Ok(true);
+        }
     };
     launch(paths, opts)
 }
@@ -164,7 +169,8 @@ fn init_logging(paths: &Paths) -> tracing_appender::non_blocking::WorkerGuard {
     let (writer, guard) =
         tracing_appender::non_blocking(tracing_appender::rolling::never(&paths.logs, file_name));
 
-    let filter = EnvFilter::try_from_env("RBXB_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter =
+        EnvFilter::try_from_env("RUSTICEAN_LOG").unwrap_or_else(|_| EnvFilter::new("info"));
     tracing_subscriber::registry()
         .with(filter)
         .with(

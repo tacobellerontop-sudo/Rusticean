@@ -21,7 +21,19 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo build --release
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DAppVersion=$version" installer\Rusticean.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: robloxbootstrapper-windows-x64
-          path: target/release/robloxbootstrapper.exe
+          name: Rusticean-Setup
+          path: target/installer/Rusticean-Setup.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Rusticean-windows-x64
+          path: target/release/Rusticean.exe

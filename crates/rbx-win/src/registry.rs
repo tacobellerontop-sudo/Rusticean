@@ -20,6 +20,43 @@ pub fn register_player_protocol(exe: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Remove our `roblox://` and `roblox-player://` handlers, but only where they still
+/// point at `exe` (the stock launcher may have taken them back already).
+pub fn unregister_player_protocol(exe: &Path) -> io::Result<()> {
+    let handler = exe.display().to_string();
+    for scheme in ["roblox", "roblox-player"] {
+        unregister_protocol(scheme, &handler)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn unregister_protocol(scheme: &str, handler: &str) -> io::Result<()> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    let classes = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\Classes")?;
+    let command = match classes.open_subkey(format!(r"{scheme}\shell\open\command")) {
+        Ok(key) => key.get_value::<String, _>("").unwrap_or_default(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    if command
+        .to_ascii_lowercase()
+        .contains(&handler.to_ascii_lowercase())
+    {
+        let classes = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey_with_flags(r"Software\Classes", winreg::enums::KEY_ALL_ACCESS)?;
+        classes.delete_subkey_all(scheme)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn unregister_protocol(_scheme: &str, _handler: &str) -> io::Result<()> {
+    Ok(())
+}
+
 #[cfg(windows)]
 fn register_protocol(scheme: &str, name: &str, handler: &str, param: &str) -> io::Result<()> {
     use winreg::RegKey;

@@ -72,7 +72,7 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
     let settings = Settings::load(&paths.settings_file);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("robloxbootstrapper settings")
+            .with_title("Rusticean settings")
             .with_inner_size(WINDOW_SIZE)
             .with_decorations(false)
             .with_resizable(false)
@@ -85,7 +85,7 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
     let launch_flag = launch.clone();
 
     eframe::run_native(
-        "robloxbootstrapper-settings",
+        "Rusticean-settings",
         options,
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx);
@@ -202,11 +202,7 @@ impl SettingsApp {
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(28.0), Sense::hover());
             draw_mark(ui.painter(), rect.center(), 11.0, SURFACE);
-            ui.label(
-                RichText::new("robloxbootstrapper")
-                    .font(bold(14.5))
-                    .color(TEXT),
-            );
+            ui.label(RichText::new("Rusticean").font(bold(14.5)).color(TEXT));
         });
         ui.add_space(18.0);
 
@@ -741,7 +737,7 @@ impl SettingsApp {
             let (rect, _) = ui.allocate_exact_size(Vec2::splat(72.0), Sense::hover());
             draw_mark(ui.painter(), rect.center(), 30.0, BG);
             ui.add_space(12.0);
-            ui.label(RichText::new("robloxbootstrapper").font(bold(22.0)).color(TEXT));
+            ui.label(RichText::new("Rusticean").font(bold(22.0)).color(TEXT));
             ui.label(
                 RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION")))
                     .size(13.0)

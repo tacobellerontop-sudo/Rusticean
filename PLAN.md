@@ -1,4 +1,4 @@
-# robloxbootstrapper: plan for a Rust reimplementation of Bloxstrap
+# Rusticean: plan for a Rust reimplementation of Bloxstrap
 
 Reference: [bloxstraplabs/bloxstrap](https://github.com/bloxstraplabs/bloxstrap) (MIT, © pizzaboxer).
 Bloxstrap is written in **C# / .NET (WPF)**, ~9k lines of non-UI logic plus a large XAML UI.
@@ -63,7 +63,7 @@ Target platform: **Windows 10/11 x64** (Roblox's own client is Windows-only; Lin
 Single Cargo workspace. The core is UI-agnostic so we can test it headlessly and swap the GUI.
 
 ```
-robloxbootstrapper/
+Rusticean/
 ├─ Cargo.toml                (workspace)
 ├─ crates/
 │  ├─ rbx-deploy/            CDN mirrors, client-version API, package manifest, download+verify, extract
@@ -131,10 +131,10 @@ Each phase ends with something runnable.
 
 ### Phase 0: Skeleton (½ day)
 - Workspace, crates above as empty libs, CI (`cargo fmt --check`, `clippy -D warnings`, `cargo test`) on `windows-latest` via GitHub Actions.
-- `tracing` logging to `%LOCALAPPDATA%\robloxbootstrapper\Logs`.
+- `tracing` logging to `%LOCALAPPDATA%\Rusticean\Logs`.
 
 ### Phase 1: Minimal working launcher (CLI, no GUI) ← first real goal
-Done when: `robloxbootstrapper.exe -player` installs the current Roblox and opens the app, and clicking Play on roblox.com joins a game through us.
+Done when: `Rusticean.exe -player` installs the current Roblox and opens the app, and clicking Play on roblox.com joins a game through us.
 1. `rbx-deploy::manifest` parser + unit tests.
 2. Mirror race + `client-version` fetch (production channel only).
 3. Download with MD5 verify, reuse cache, extract via package map, write `AppSettings.xml`.

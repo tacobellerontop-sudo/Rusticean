@@ -55,7 +55,7 @@ pub fn run(paths: Paths, opts: LaunchOptions) -> anyhow::Result<bool> {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("robloxbootstrapper")
+            .with_title("Rusticean")
             .with_inner_size(WINDOW_SIZE)
             .with_resizable(false)
             .with_decorations(false)
@@ -69,7 +69,7 @@ pub fn run(paths: Paths, opts: LaunchOptions) -> anyhow::Result<bool> {
     let logs_dir = paths.logs.clone();
 
     eframe::run_native(
-        "robloxbootstrapper",
+        "Rusticean",
         options,
         Box::new(move |cc| {
             install_fonts(&cc.egui_ctx);
@@ -121,7 +121,7 @@ fn spawn_worker(
         };
 
         #[cfg(debug_assertions)]
-        if let Ok(mode) = std::env::var("RBXB_UI_PREVIEW") {
+        if let Ok(mode) = std::env::var("RUSTICEAN_UI_PREVIEW") {
             let result = preview::run(&mode, &*on_status, &cancel);
             shared.lock().unwrap().outcome = Some(result);
             ctx.request_repaint();
@@ -237,7 +237,7 @@ impl BootstrapperApp {
     /// A draggable strip across the top with the app name and a close button.
     fn title_bar(&mut self, ui: &mut egui::Ui, full: Rect) {
         let bar = Rect::from_min_size(full.min, Vec2::new(full.width(), 34.0));
-        if title_bar(ui, bar, "robloxbootstrapper", false) == TitleAction::Close {
+        if title_bar(ui, bar, "Rusticean", false) == TitleAction::Close {
             self.cancel.store(true, Ordering::Relaxed);
             ui.ctx().send_viewport_cmd(ViewportCommand::Close);
         }
@@ -513,7 +513,7 @@ impl SpeedMeter {
     }
 }
 
-/// Debug builds only: `RBXB_UI_PREVIEW=1` (or `=error`) plays a fake install so the
+/// Debug builds only: `RUSTICEAN_UI_PREVIEW=1` (or `=error`) plays a fake install so the
 /// window can be worked on without touching Roblox's servers.
 #[cfg(debug_assertions)]
 mod preview {

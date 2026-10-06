@@ -9,9 +9,9 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Where overwritten originals are kept, inside the version folder.
-const BACKUP_DIR: &str = ".rbxb-originals";
+const BACKUP_DIR: &str = ".rusticean-originals";
 /// The list of files we put in the version folder last time.
-const APPLIED_LIST: &str = ".rbxb-mods.json";
+const APPLIED_LIST: &str = ".rusticean-mods.json";
 
 /// Copy every file in `mods_dir` into `version_dir` and undo mods that were removed.
 /// Returns how many mod files are applied.
