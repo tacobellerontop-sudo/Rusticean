@@ -12,6 +12,7 @@ use crate::channel;
 use crate::cleanup;
 use crate::mods;
 use crate::paths::{APP_NAME, Paths};
+use crate::presets;
 use crate::settings::{self, ProcessPriority, Settings};
 use crate::state::State;
 
@@ -190,11 +191,17 @@ pub async fn run(
     }
 
     // FastFlags are rewritten every launch so settings changes apply without a reinstall
-    settings::write_client_settings(&version_dir, &settings.effective_fast_flags())
-        .map_err(io_err("writing ClientAppSettings.json"))?;
+    if settings.manage_fast_flags {
+        settings::write_client_settings(&version_dir, &settings.effective_fast_flags())
+            .map_err(io_err("writing ClientAppSettings.json"))?;
+    }
+
+    if let Err(e) = presets::sync(paths, &settings, &version_dir, &client).await {
+        tracing::warn!(error = %e, "could not prepare mod presets");
+    }
 
     // a broken mod shouldn't stop the game from starting
-    match mods::apply(&paths.modifications, &version_dir) {
+    match mods::apply(&[&paths.presets, &paths.modifications], &version_dir) {
         Ok(0) => {}
         Ok(n) => tracing::info!(files = n, "applied modifications"),
         Err(e) => tracing::warn!(error = %e, "could not apply modifications"),
@@ -202,9 +209,10 @@ pub async fn run(
     if let Err(e) = mods::set_fullbright(&version_dir, settings.fullbright) {
         tracing::warn!(error = %e, "could not change fullbright");
     }
-    if let Err(e) = rbx_win::registry::set_fullscreen_optimizations(
+    if let Err(e) = rbx_win::registry::set_compat_flags(
         &exe,
-        !settings.disable_fullscreen_optimizations,
+        settings.disable_fullscreen_optimizations,
+        settings.dpi_override,
     ) {
         tracing::warn!(error = %e, "could not set fullscreen optimizations");
     }

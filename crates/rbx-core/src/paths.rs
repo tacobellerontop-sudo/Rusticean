@@ -13,6 +13,12 @@ pub struct Paths {
     pub logs: PathBuf,
     /// Files in here are copied over the Roblox install on every launch.
     pub modifications: PathBuf,
+    /// Generated from the mod preset settings on every launch; applied before `modifications`.
+    pub presets: PathBuf,
+    /// Downloaded extras, like emoji fonts.
+    pub cache: PathBuf,
+    /// The font chosen under Mods > Custom font.
+    pub custom_font: PathBuf,
     pub state_file: PathBuf,
     pub settings_file: PathBuf,
 }
@@ -25,6 +31,9 @@ impl Paths {
             versions: base.join("Versions"),
             logs: base.join("Logs"),
             modifications: base.join("Modifications"),
+            presets: base.join("Presets"),
+            cache: base.join("Cache"),
+            custom_font: base.join("CustomFont.ttf"),
             state_file: base.join("State.json"),
             settings_file: base.join("Settings.json"),
             base,

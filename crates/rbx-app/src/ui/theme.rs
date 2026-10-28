@@ -1,24 +1,118 @@
-//! Colours, fonts and widgets shared by every window, following Roblox's dark theme.
+//! Colours, fonts and widgets shared by every window, following Roblox's dark and light
+//! themes.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use rbx_core::settings::Theme;
 
 use eframe::egui::{
     self, Align2, Color32, CornerRadius, FontFamily, FontId, Sense, Stroke, StrokeKind, Vec2,
 };
 
-// Roblox's dark theme
-pub const BG: Color32 = Color32::from_rgb(0x19, 0x1B, 0x1D);
-pub const SURFACE: Color32 = Color32::from_rgb(0x23, 0x25, 0x27);
-pub const BORDER: Color32 = Color32::from_rgb(0x39, 0x3B, 0x3D);
-pub const TEXT: Color32 = Color32::from_rgb(0xF7, 0xF7, 0xF8);
-pub const TEXT_DIM: Color32 = Color32::from_rgb(0xBD, 0xBE, 0xBE);
-pub const BLUE: Color32 = Color32::from_rgb(0x33, 0x5F, 0xFF);
-pub const BLUE_LIGHT: Color32 = Color32::from_rgb(0x6E, 0x8C, 0xFF);
-pub const RED: Color32 = Color32::from_rgb(0xE5, 0x48, 0x4D);
+/// A colour scheme. Roblox's own dark and light themes.
+pub struct Palette {
+    pub bg: Color32,
+    pub surface: Color32,
+    pub border: Color32,
+    pub text: Color32,
+    pub text_dim: Color32,
+    pub blue: Color32,
+    pub blue_light: Color32,
+    pub red: Color32,
+    /// Title bars and text boxes, a step darker than `bg`.
+    pub deep: Color32,
+    pub hover: Color32,
+    pub selected: Color32,
+    pub danger_bg: Color32,
+    pub dark: bool,
+}
+
+pub const DARK: Palette = Palette {
+    bg: Color32::from_rgb(0x19, 0x1B, 0x1D),
+    surface: Color32::from_rgb(0x23, 0x25, 0x27),
+    border: Color32::from_rgb(0x39, 0x3B, 0x3D),
+    text: Color32::from_rgb(0xF7, 0xF7, 0xF8),
+    text_dim: Color32::from_rgb(0xBD, 0xBE, 0xBE),
+    blue: Color32::from_rgb(0x33, 0x5F, 0xFF),
+    blue_light: Color32::from_rgb(0x6E, 0x8C, 0xFF),
+    red: Color32::from_rgb(0xE5, 0x48, 0x4D),
+    deep: Color32::from_rgb(0x12, 0x13, 0x15),
+    hover: Color32::from_rgb(0x2B, 0x2D, 0x30),
+    selected: Color32::from_rgb(0x2E, 0x33, 0x45),
+    danger_bg: Color32::from_rgb(0x3A, 0x1F, 0x22),
+    dark: true,
+};
+
+pub const LIGHT: Palette = Palette {
+    bg: Color32::from_rgb(0xF2, 0xF4, 0xF5),
+    surface: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+    border: Color32::from_rgb(0xD6, 0xD9, 0xDC),
+    text: Color32::from_rgb(0x39, 0x3B, 0x3D),
+    text_dim: Color32::from_rgb(0x60, 0x62, 0x64),
+    blue: Color32::from_rgb(0x33, 0x5F, 0xFF),
+    blue_light: Color32::from_rgb(0x24, 0x4C, 0xE6),
+    red: Color32::from_rgb(0xD2, 0x32, 0x38),
+    deep: Color32::from_rgb(0xE3, 0xE6, 0xE8),
+    hover: Color32::from_rgb(0xE6, 0xE9, 0xEC),
+    selected: Color32::from_rgb(0xDD, 0xE5, 0xFF),
+    danger_bg: Color32::from_rgb(0xFD, 0xE8, 0xE9),
+    dark: false,
+};
+
+static LIGHT_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Switch every window to the light or dark palette.
+pub fn set_light(light: bool) {
+    LIGHT_MODE.store(light, Ordering::Relaxed);
+}
+
+/// Whether the chosen theme is light, asking Windows for "System default".
+pub fn wants_light(theme: Theme) -> bool {
+    match theme {
+        Theme::Dark => false,
+        Theme::Light => true,
+        Theme::System => rbx_win::registry::system_uses_light_theme(),
+    }
+}
+
+pub fn palette() -> &'static Palette {
+    if LIGHT_MODE.load(Ordering::Relaxed) {
+        &LIGHT
+    } else {
+        &DARK
+    }
+}
+
+pub fn bg() -> Color32 {
+    palette().bg
+}
+pub fn surface() -> Color32 {
+    palette().surface
+}
+pub fn border() -> Color32 {
+    palette().border
+}
+pub fn text() -> Color32 {
+    palette().text
+}
+pub fn text_dim() -> Color32 {
+    palette().text_dim
+}
+pub fn blue() -> Color32 {
+    palette().blue
+}
+pub fn blue_light() -> Color32 {
+    palette().blue_light
+}
+pub fn red() -> Color32 {
+    palette().red
+}
+
 /// Bold text uses this family when a bold system font is available.
 pub const BOLD: &str = "bold";
 pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
-    styled_button(ui, text, BLUE, Color32::WHITE, Stroke::NONE)
+    styled_button(ui, text, blue(), Color32::WHITE, Stroke::NONE)
 }
 
 pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
@@ -26,8 +120,8 @@ pub fn secondary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
         ui,
         text,
         Color32::TRANSPARENT,
-        TEXT,
-        Stroke::new(1.0, BORDER),
+        palette().text,
+        Stroke::new(1.0, border()),
     )
 }
 
@@ -41,9 +135,9 @@ pub fn styled_button(
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(120.0, 34.0), Sense::click());
     let fill = if resp.hovered() {
         if fill == Color32::TRANSPARENT {
-            SURFACE
+            surface()
         } else {
-            BLUE_LIGHT
+            blue_light()
         }
     } else {
         fill
@@ -139,33 +233,44 @@ pub fn app_icon() -> egui::IconData {
 
 /// Apply the theme to egui's built-in widgets (text boxes, checkboxes, combo boxes...).
 pub fn apply_visuals(ctx: &egui::Context) {
-    let mut v = egui::Visuals::dark();
-    v.panel_fill = BG;
-    v.window_fill = SURFACE;
-    v.extreme_bg_color = Color32::from_rgb(0x12, 0x13, 0x15);
-    v.faint_bg_color = SURFACE;
-    v.override_text_color = Some(TEXT);
-    v.selection.bg_fill = BLUE;
-    v.selection.stroke = Stroke::new(1.0, TEXT);
-    v.hyperlink_color = BLUE_LIGHT;
+    let p = palette();
+    let mut v = if p.dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
+    v.panel_fill = p.bg;
+    v.window_fill = p.surface;
+    v.extreme_bg_color = p.deep;
+    v.faint_bg_color = p.surface;
+    v.override_text_color = Some(p.text);
+    v.selection.bg_fill = p.blue;
+    v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
+    v.hyperlink_color = p.blue_light;
     for (w, fill) in [
-        (&mut v.widgets.noninteractive, BG),
-        (&mut v.widgets.inactive, SURFACE),
-        (&mut v.widgets.hovered, Color32::from_rgb(0x2E, 0x30, 0x33)),
-        (&mut v.widgets.active, Color32::from_rgb(0x39, 0x3B, 0x3D)),
-        (&mut v.widgets.open, SURFACE),
+        (&mut v.widgets.noninteractive, p.bg),
+        (&mut v.widgets.inactive, p.surface),
+        (&mut v.widgets.hovered, p.hover),
+        (&mut v.widgets.active, p.border),
+        (&mut v.widgets.open, p.surface),
     ] {
         w.bg_fill = fill;
         w.weak_bg_fill = fill;
         w.corner_radius = CornerRadius::same(6);
+        w.fg_stroke.color = p.text;
     }
-    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
-    v.widgets.inactive.bg_stroke = Stroke::new(1.0, BORDER);
-    v.widgets.hovered.bg_stroke = Stroke::new(1.0, BLUE_LIGHT);
-    v.widgets.active.bg_stroke = Stroke::new(1.0, BLUE);
-    // always dark, whatever the Windows theme
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.set_visuals_of(egui::Theme::Dark, v);
+    v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.inactive.bg_stroke = Stroke::new(1.0, p.border);
+    v.widgets.hovered.bg_stroke = Stroke::new(1.0, p.blue_light);
+    v.widgets.active.bg_stroke = Stroke::new(1.0, p.blue);
+    // our palette decides, whatever egui thinks the OS theme is
+    let theme = if p.dark {
+        egui::Theme::Dark
+    } else {
+        egui::Theme::Light
+    };
+    ctx.set_theme(theme);
+    ctx.set_visuals_of(theme, v);
     ctx.all_styles_mut(|s| {
         s.spacing.item_spacing = Vec2::new(8.0, 8.0);
         s.spacing.button_padding = Vec2::new(10.0, 5.0);
@@ -177,7 +282,7 @@ pub fn apply_visuals(ctx: &egui::Context) {
 pub fn draw_mark(painter: &egui::Painter, center: egui::Pos2, half: f32, hole: Color32) {
     painter.add(egui::Shape::convex_polygon(
         square(center, half, 0.26),
-        BLUE,
+        blue(),
         Stroke::NONE,
     ));
     painter.add(egui::Shape::convex_polygon(
@@ -225,7 +330,7 @@ pub fn title_bar(ui: &mut egui::Ui, bar: egui::Rect, title: &str, minimize: bool
         Align2::LEFT_CENTER,
         title,
         FontId::proportional(12.5),
-        TEXT_DIM,
+        text_dim(),
     );
 
     let mut action = TitleAction::None;
@@ -247,7 +352,7 @@ pub fn title_bar(ui: &mut egui::Ui, bar: egui::Rect, title: &str, minimize: bool
         if resp.hovered() {
             Color32::WHITE
         } else {
-            TEXT_DIM
+            text_dim()
         },
     );
     ui.painter()
@@ -262,10 +367,10 @@ pub fn title_bar(ui: &mut egui::Ui, bar: egui::Rect, title: &str, minimize: bool
         let min = close.translate(Vec2::new(-size.x, 0.0));
         let resp = ui.interact(min, ui.id().with("minimize"), Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(min, CornerRadius::ZERO, SURFACE);
+            ui.painter().rect_filled(min, CornerRadius::ZERO, surface());
         }
         let c = min.center();
-        let stroke = Stroke::new(1.3, if resp.hovered() { TEXT } else { TEXT_DIM });
+        let stroke = Stroke::new(1.3, if resp.hovered() { text() } else { text_dim() });
         ui.painter()
             .line_segment([c + Vec2::new(-5.0, 0.0), c + Vec2::new(5.0, 0.0)], stroke);
         if resp.clicked() {

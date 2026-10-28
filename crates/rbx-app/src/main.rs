@@ -90,6 +90,14 @@ fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
             }
             cli::Options::default()
         }
+        cli::Command::Preview => {
+            let opts = LaunchOptions {
+                no_launch: true,
+                ..LaunchOptions::default()
+            };
+            ui::bootstrapper::run(paths.clone(), opts, Some("1".into()))?;
+            return Ok(true);
+        }
         cli::Command::Register | cli::Command::Unregister | cli::Command::Help => {
             return Ok(true);
         }
@@ -116,7 +124,7 @@ fn launch(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
 
 fn bootstrap(paths: &Paths, opts: &LaunchOptions, show_window: bool) -> anyhow::Result<bool> {
     if show_window {
-        match ui::bootstrapper::run(paths.clone(), opts.clone()) {
+        match ui::bootstrapper::run(paths.clone(), opts.clone(), None) {
             Ok(success) => return Ok(success),
             Err(e) => tracing::warn!("{e:#}; continuing without a window"),
         }
