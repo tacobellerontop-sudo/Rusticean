@@ -33,6 +33,7 @@ CloseApplications=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
+Name: "studioicon"; Description: "Add a Roblox Studio shortcut to the Start menu"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
 Source: "..\target\release\Rusticean.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -40,6 +41,7 @@ Source: "..\target\release\Rusticean.exe"; DestDir: "{app}"; Flags: ignoreversio
 [Icons]
 Name: "{autoprograms}\Rusticean"; Filename: "{app}\Rusticean.exe"
 Name: "{autodesktop}\Rusticean"; Filename: "{app}\Rusticean.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Roblox Studio (Rusticean)"; Filename: "{app}\Rusticean.exe"; Parameters: "-studio"; Tasks: studioicon
 
 [Run]
 ; make roblox:// links open Rusticean straight away

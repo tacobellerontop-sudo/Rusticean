@@ -30,6 +30,72 @@ pub fn unregister_player_protocol(exe: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Studio's link schemes: `roblox-studio:` opens a place from the website's Edit button,
+/// `roblox-studio-auth:` finishes signing in.
+const STUDIO_SCHEMES: [&str; 2] = ["roblox-studio", "roblox-studio-auth"];
+/// Place files Studio opens on a double-click, and the class they point at (the same one
+/// Roblox's own installer uses, so it takes them back cleanly when reinstalled).
+const PLACE_EXTENSIONS: [&str; 2] = [".rbxl", ".rbxlx"];
+const PLACE_CLASS: &str = "Roblox.Place";
+
+/// Make Studio links and `.rbxl`/`.rbxlx` files open `exe -studio "<uri or path>"`.
+pub fn register_studio_handlers(exe: &Path) -> io::Result<()> {
+    let handler = exe.display().to_string();
+    for scheme in STUDIO_SCHEMES {
+        register_protocol(scheme, "Roblox Studio", &handler, r#"-studio "%1""#)?;
+    }
+    register_file_type(PLACE_CLASS, "Roblox Place", &PLACE_EXTENSIONS, &handler)
+}
+
+/// Undo [`register_studio_handlers`], again only where the entries still point at `exe`.
+pub fn unregister_studio_handlers(exe: &Path) -> io::Result<()> {
+    let handler = exe.display().to_string();
+    for scheme in STUDIO_SCHEMES.into_iter().chain([PLACE_CLASS]) {
+        unregister_protocol(scheme, &handler)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn register_file_type(
+    class: &str,
+    name: &str,
+    extensions: &[&str],
+    handler: &str,
+) -> io::Result<()> {
+    use winreg::RegKey;
+    use winreg::enums::HKEY_CURRENT_USER;
+
+    let classes = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(r"Software\Classes")?
+        .0;
+    let (key, _) = classes.create_subkey(class)?;
+    key.set_value("", &name)?;
+    key.create_subkey("DefaultIcon")?
+        .0
+        .set_value("", &handler)?;
+    key.create_subkey(r"shell\open\command")?
+        .0
+        .set_value("", &format!(r#""{handler}" -studio "%1""#))?;
+    for ext in extensions {
+        classes.create_subkey(ext)?.0.set_value("", &class)?;
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn register_file_type(
+    _class: &str,
+    _name: &str,
+    _extensions: &[&str],
+    _handler: &str,
+) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "file associations are only supported on Windows",
+    ))
+}
+
 #[cfg(windows)]
 fn unregister_protocol(scheme: &str, handler: &str) -> io::Result<()> {
     use winreg::RegKey;

@@ -9,7 +9,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use anyhow::Context;
-use rbx_core::{LaunchOptions, Paths, Settings, Status, StatusFn};
+use rbx_core::state::State;
+use rbx_core::{LaunchMode, LaunchOptions, Paths, Settings, Status, StatusFn};
 use rbx_deploy::install::Stage;
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
@@ -74,6 +75,8 @@ fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
     if command == cli::Command::Unregister {
         rbx_win::registry::unregister_player_protocol(&exe)
             .context("removing the roblox:// link handler")?;
+        rbx_win::registry::unregister_studio_handlers(&exe)
+            .context("removing the roblox-studio:// link handler")?;
         return Ok(true);
     }
 
@@ -81,14 +84,31 @@ fn run(paths: &Paths, command: cli::Command) -> anyhow::Result<bool> {
     if let Err(e) = rbx_win::registry::register_player_protocol(&exe) {
         tracing::warn!(error = %e, "could not register protocol handler");
     }
+    // Studio's links and place files only once Studio is launched through us, so someone who
+    // only plays keeps their stock Studio
+    let studio_launch = matches!(&command, cli::Command::Launch(o) if o.mode == LaunchMode::Studio);
+    let studio_installed = State::load(&paths.state_file).studio.version_guid.is_some();
+    if (studio_launch || studio_installed)
+        && let Err(e) = rbx_win::registry::register_studio_handlers(&exe)
+    {
+        tracing::warn!(error = %e, "could not register Studio handlers");
+    }
 
     let opts = match command {
-        cli::Command::Player(opts) => opts,
+        cli::Command::Launch(opts) => opts,
         cli::Command::Settings => {
-            if !ui::settings::run(paths.clone())? {
+            let Some(mode) = ui::settings::run(paths.clone())? else {
                 return Ok(true);
+            };
+            if mode == LaunchMode::Studio
+                && let Err(e) = rbx_win::registry::register_studio_handlers(&exe)
+            {
+                tracing::warn!(error = %e, "could not register Studio handlers");
             }
-            cli::Options::default()
+            cli::Options {
+                mode,
+                ..cli::Options::default()
+            }
         }
         cli::Command::Preview => {
             let opts = LaunchOptions {
@@ -110,8 +130,9 @@ fn launch(paths: &Paths, opts: cli::Options) -> anyhow::Result<bool> {
     let show_window = !opts.quiet && settings.show_progress_window;
     let opts: LaunchOptions = opts.into();
 
-    // set up before Roblox starts: multi-instance only works if we hold its mutex first
-    let companion = (!opts.no_launch)
+    // set up before Roblox starts: multi-instance only works if we hold its mutex first.
+    // The companion watches the player's game, so Studio runs without it.
+    let companion = (!opts.no_launch && opts.mode == LaunchMode::Player)
         .then(|| companion::Companion::prepare(&settings))
         .flatten();
 
