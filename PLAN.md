@@ -161,7 +161,7 @@ Done when: `Rusticean.exe -player` installs the current Roblox and opens the app
 - Tray icon with "copy server location / invite link", custom integrations (launch + auto-close).
 
 ### Phase 5: Studio, polish, release
-- Studio support (`WindowsStudio64`, Studio package map, `roblox-studio(-auth)` protocols, `.rbxl` association).
+- ~~Studio support (`WindowsStudio64`, Studio package map, `roblox-studio(-auth)` protocols, `.rbxl` association).~~ Done.
 - Background updater, self-update from our GitHub releases, localisation, themes/custom bootstrapper styles.
 - Signed release builds via GitHub Actions.
 

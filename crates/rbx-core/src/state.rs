@@ -2,6 +2,7 @@
 
 use std::path::Path;
 
+use rbx_deploy::BinaryType;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -15,9 +16,24 @@ pub struct DistributionState {
 #[serde(rename_all = "PascalCase", default)]
 pub struct State {
     pub player: DistributionState,
+    pub studio: DistributionState,
 }
 
 impl State {
+    pub fn distribution(&self, binary: BinaryType) -> &DistributionState {
+        match binary {
+            BinaryType::WindowsPlayer => &self.player,
+            BinaryType::WindowsStudio64 => &self.studio,
+        }
+    }
+
+    pub fn distribution_mut(&mut self, binary: BinaryType) -> &mut DistributionState {
+        match binary {
+            BinaryType::WindowsPlayer => &mut self.player,
+            BinaryType::WindowsStudio64 => &mut self.studio,
+        }
+    }
+
     /// Load state, falling back to defaults if the file is missing or unreadable.
     pub fn load(path: &Path) -> State {
         match std::fs::read_to_string(path) {
@@ -55,10 +71,19 @@ mod tests {
 
         let mut state = State::default();
         state.player.version_guid = Some("version-abc".into());
+        state.studio.version_guid = Some("version-def".into());
         state.save(&path).unwrap();
         assert_eq!(State::load(&path), state);
 
         std::fs::write(&path, "{not json").unwrap();
         assert_eq!(State::load(&path), State::default());
+    }
+
+    #[test]
+    fn reads_files_written_before_studio_support() {
+        let state: State =
+            serde_json::from_str(r#"{"Player":{"VersionGuid":"version-abc"}}"#).unwrap();
+        assert_eq!(state.player.version_guid.as_deref(), Some("version-abc"));
+        assert_eq!(state.studio, DistributionState::default());
     }
 }

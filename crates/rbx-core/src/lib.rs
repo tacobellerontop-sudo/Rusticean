@@ -12,6 +12,6 @@ pub mod roblox_api;
 pub mod settings;
 pub mod state;
 
-pub use bootstrap::{Error, LaunchOptions, Status, StatusFn, run};
+pub use bootstrap::{Error, LaunchMode, LaunchOptions, Status, StatusFn, run};
 pub use paths::Paths;
 pub use settings::Settings;

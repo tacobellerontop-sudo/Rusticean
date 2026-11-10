@@ -10,7 +10,7 @@ use rbx_core::settings::{
     Msaa, ProcessPriority, RenderingApi, TextureQuality, Theme, parse_flag_value,
 };
 use rbx_core::state::State;
-use rbx_core::{Paths, Settings};
+use rbx_core::{LaunchMode, Paths, Settings};
 
 use super::theme::*;
 
@@ -76,11 +76,12 @@ struct SettingsApp {
     confirm_reset: bool,
     /// Why the last font or icon file couldn't be used.
     file_error: Option<String>,
-    launch_requested: bool,
+    launch_requested: Option<LaunchMode>,
 }
 
-/// Show the settings window. Returns `true` if the user clicked "Launch Roblox".
-pub fn run(paths: Paths) -> anyhow::Result<bool> {
+/// Show the settings window. Returns which app to start if the user clicked "Launch Roblox"
+/// or "Launch Studio".
+pub fn run(paths: Paths) -> anyhow::Result<Option<LaunchMode>> {
     let settings = Settings::load(&paths.settings_file);
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -93,7 +94,7 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
         ..Default::default()
     };
 
-    let launch = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let launch = std::sync::Arc::new(std::sync::Mutex::new(None));
     let launch_flag = launch.clone();
 
     eframe::run_native(
@@ -119,7 +120,7 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
                     shown_theme: theme,
                     confirm_reset: false,
                     file_error: None,
-                    launch_requested: false,
+                    launch_requested: None,
                 },
                 launch: launch_flag,
             }))
@@ -127,21 +128,21 @@ pub fn run(paths: Paths) -> anyhow::Result<bool> {
     )
     .map_err(|e| anyhow::anyhow!("could not open the settings window: {e}"))?;
 
-    Ok(launch.load(std::sync::atomic::Ordering::Relaxed))
+    let mode = *launch.lock().unwrap();
+    Ok(mode)
 }
 
 /// Carries the "launch" answer out of eframe, which owns the app.
 struct Wrapper {
     app: SettingsApp,
-    launch: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    launch: std::sync::Arc<std::sync::Mutex<Option<LaunchMode>>>,
 }
 
 impl eframe::App for Wrapper {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
-        if self.app.launch_requested {
-            self.launch
-                .store(true, std::sync::atomic::Ordering::Relaxed);
+        if let Some(mode) = self.app.launch_requested {
+            *self.launch.lock().unwrap() = Some(mode);
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
@@ -293,8 +294,13 @@ impl SettingsApp {
                 }
             }
             ui.add_space(4.0);
+            // bottom-up, so Studio sits under the main button
+            if wide_secondary_button(ui, "Launch Roblox Studio").clicked() {
+                self.launch_requested = Some(LaunchMode::Studio);
+            }
+            ui.add_space(2.0);
             if wide_primary_button(ui, "Launch Roblox").clicked() {
-                self.launch_requested = true;
+                self.launch_requested = Some(LaunchMode::Player);
             }
         });
     }
@@ -1325,6 +1331,29 @@ fn wide_primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
         format!("▶  {text}"),
         bold(14.5),
         Color32::WHITE,
+    );
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn wide_secondary_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
+    let (rect, resp) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
+    if resp.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(8), surface());
+    }
+    ui.painter().rect_stroke(
+        rect,
+        CornerRadius::same(8),
+        egui::Stroke::new(1.0, border()),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        bold(14.0),
+        text(),
     );
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

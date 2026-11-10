@@ -1,12 +1,12 @@
 //! Command-line parsing. Bloxstrap-style single-dash flags, because that's what the
 //! protocol handler and Bloxstrap users expect: `-player "roblox-player:1+..."`.
 
-use rbx_core::LaunchOptions;
+use rbx_core::{LaunchMode, LaunchOptions};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    /// Install/update the player and launch it.
-    Player(Options),
+    /// Install/update the player or Studio and launch it.
+    Launch(Options),
     /// Open the settings window (the default when run with no arguments).
     Settings,
     /// Point roblox:// links at this exe and exit (run by the installer).
@@ -20,6 +20,7 @@ pub enum Command {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Options {
+    pub mode: LaunchMode,
     pub launch_args: String,
     pub channel: Option<String>,
     pub version_guid: Option<String>,
@@ -32,6 +33,7 @@ pub struct Options {
 impl From<Options> for LaunchOptions {
     fn from(o: Options) -> Self {
         LaunchOptions {
+            mode: o.mode,
             launch_args: o.launch_args,
             channel: o.channel,
             version_guid: o.version_guid,
@@ -41,9 +43,16 @@ impl From<Options> for LaunchOptions {
     }
 }
 
-fn is_roblox_uri(arg: &str) -> bool {
+/// Which app a bare `roblox…:` URI is for, or `None` if `arg` isn't one.
+fn uri_mode(arg: &str) -> Option<LaunchMode> {
     let lower = arg.to_ascii_lowercase();
-    lower.starts_with("roblox-player:") || lower.starts_with("roblox:")
+    if lower.starts_with("roblox-studio:") || lower.starts_with("roblox-studio-auth:") {
+        Some(LaunchMode::Studio)
+    } else if lower.starts_with("roblox-player:") || lower.starts_with("roblox:") {
+        Some(LaunchMode::Player)
+    } else {
+        None
+    }
 }
 
 pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String> {
@@ -57,7 +66,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     }
 
     while let Some(arg) = args.next() {
-        if is_roblox_uri(&arg) {
+        if let Some(mode) = uri_mode(&arg) {
+            opts.mode = mode;
             opts.launch_args = arg;
             any_player_arg = true;
             continue;
@@ -78,7 +88,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
         any_player_arg = true;
 
         match flag.as_str() {
-            "player" => opts.launch_args = value(&mut args).unwrap_or_default(),
+            "player" => {
+                opts.mode = LaunchMode::Player;
+                opts.launch_args = value(&mut args).unwrap_or_default();
+            }
+            "studio" => {
+                opts.mode = LaunchMode::Studio;
+                opts.launch_args = value(&mut args).unwrap_or_default();
+            }
             "channel" => {
                 opts.channel = Some(value(&mut args).ok_or("-channel needs a channel name")?)
             }
@@ -94,7 +111,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Command, String>
     }
 
     if any_player_arg {
-        Ok(Command::Player(opts))
+        Ok(Command::Launch(opts))
     } else {
         Ok(Command::Settings)
     }
@@ -106,11 +123,14 @@ Rusticean: installs, updates and launches Roblox
 USAGE:
     Rusticean                          Open settings
     Rusticean -player [URI] [FLAGS]    Install/update Roblox and launch it
+    Rusticean -studio [URI|FILE]       Install/update Roblox Studio and launch it
 
-Launching also registers it as the handler for roblox:// and roblox-player:// links.
+Launching registers it as the handler for roblox:// and roblox-player:// links; launching
+Studio also takes roblox-studio:// links and .rbxl/.rbxlx files.
 
 FLAGS:
     -player [URI]      Launch the player, optionally with a roblox-player: URI
+    -studio [URI|FILE] Launch Studio, optionally with a roblox-studio: URI or a place file
     -settings          Open the settings window
     -channel <name>    Use this deployment channel instead of the default
     -version <guid>    Install this exact version (e.g. version-1a2b3c4d5e6f7a8b)
@@ -134,7 +154,7 @@ mod tests {
     fn no_args_opens_settings() {
         assert_eq!(p(&[]), Ok(Command::Settings));
         assert_eq!(p(&["-settings"]), Ok(Command::Settings));
-        assert_eq!(p(&["-player"]), Ok(Command::Player(Options::default())));
+        assert_eq!(p(&["-player"]), Ok(Command::Launch(Options::default())));
     }
 
     #[test]
@@ -146,7 +166,7 @@ mod tests {
     #[test]
     fn protocol_handler_invocation() {
         let uri = "roblox-player:1+launchmode:play+gameinfo:abc+placelauncherurl:x";
-        let Ok(Command::Player(o)) = p(&["-player", uri]) else {
+        let Ok(Command::Launch(o)) = p(&["-player", uri]) else {
             panic!()
         };
         assert_eq!(o.launch_args, uri);
@@ -154,7 +174,7 @@ mod tests {
 
     #[test]
     fn bare_uri_and_flags() {
-        let Ok(Command::Player(o)) = p(&[
+        let Ok(Command::Launch(o)) = p(&[
             "roblox-player:1",
             "-channel",
             "ZBeta",
@@ -171,11 +191,43 @@ mod tests {
 
     #[test]
     fn player_without_uri() {
-        let Ok(Command::Player(o)) = p(&["-player", "-force"]) else {
+        let Ok(Command::Launch(o)) = p(&["-player", "-force"]) else {
             panic!()
         };
         assert_eq!(o.launch_args, "");
         assert!(o.force);
+    }
+
+    #[test]
+    fn studio() {
+        let Ok(Command::Launch(o)) = p(&["-studio"]) else {
+            panic!()
+        };
+        assert_eq!(o.mode, LaunchMode::Studio);
+        assert_eq!(o.launch_args, "");
+
+        let uri = "roblox-studio:1+launchmode:edit+task:EditPlace+placeId:1";
+        let Ok(Command::Launch(o)) = p(&["-studio", uri]) else {
+            panic!()
+        };
+        assert_eq!((o.mode, o.launch_args.as_str()), (LaunchMode::Studio, uri));
+
+        let place = r"C:\Users\me\Place.rbxl";
+        let Ok(Command::Launch(o)) = p(&["-studio", place, "-quiet"]) else {
+            panic!()
+        };
+        assert_eq!(o.launch_args, place);
+        assert!(o.quiet);
+
+        let Ok(Command::Launch(o)) = p(&["roblox-studio-auth:1+code:abc"]) else {
+            panic!()
+        };
+        assert_eq!(o.mode, LaunchMode::Studio);
+
+        let Ok(Command::Launch(o)) = p(&["roblox-player:1"]) else {
+            panic!()
+        };
+        assert_eq!(o.mode, LaunchMode::Player);
     }
 
     #[test]

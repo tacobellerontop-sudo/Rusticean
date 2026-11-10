@@ -1,6 +1,6 @@
 ; Rusticean installer (Inno Setup 6). Built by CI:
 ;   cargo build --release
-;   iscc /DAppVersion=0.1.0 installer\Rusticean.iss
+;   iscc /DAppVersion=0.2.0 installer\Rusticean.iss
 ; Installs per user (no admin prompt) to %LOCALAPPDATA%\Programs\Rusticean. Downloaded
 ; Roblox versions, settings and logs live separately in %LOCALAPPDATA%\Rusticean.
 
@@ -33,6 +33,7 @@ CloseApplications=yes
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
+Name: "studioicon"; Description: "Add a Roblox Studio shortcut to the Start menu"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [Files]
 Source: "..\target\release\Rusticean.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -40,6 +41,7 @@ Source: "..\target\release\Rusticean.exe"; DestDir: "{app}"; Flags: ignoreversio
 [Icons]
 Name: "{autoprograms}\Rusticean"; Filename: "{app}\Rusticean.exe"
 Name: "{autodesktop}\Rusticean"; Filename: "{app}\Rusticean.exe"; Tasks: desktopicon
+Name: "{autoprograms}\Roblox Studio (Rusticean)"; Filename: "{app}\Rusticean.exe"; Parameters: "-studio"; Tasks: studioicon
 
 [Run]
 ; make roblox:// links open Rusticean straight away

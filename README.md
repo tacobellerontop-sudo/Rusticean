@@ -2,7 +2,7 @@
 
 A Roblox bootstrapper for Windows written in Rust, inspired by [Bloxstrap](https://github.com/bloxstraplabs/bloxstrap) (MIT, © pizzaboxer).
 
-It installs and updates the Roblox client itself, launches games from `roblox-player://` links, and adds extras like FastFlag editing, mods and Discord Rich Presence.
+It installs and updates the Roblox client (and Roblox Studio) itself, launches games from `roblox-player://` links, and adds extras like FastFlag editing, mods and Discord Rich Presence.
 
 See [PLAN.md](PLAN.md) for the architecture and milestones. (It was called
 `robloxbootstrapper` before; existing data in `%LOCALAPPDATA%\robloxbootstrapper` moves over
@@ -10,7 +10,7 @@ on first run.)
 
 ## Installing
 
-Download `Rusticean-Setup.exe` from the latest CI run and run it. It installs for your user
+Download `Rusticean-Setup.exe` from the [latest release](https://github.com/tacobellerontop-sudo/Rusticean/releases/latest) and run it. It installs for your user
 only (no admin prompt) to `%LOCALAPPDATA%\Programs\Rusticean`, adds a Start menu entry
 (and optionally a desktop shortcut), and registers `roblox://` links. Uninstall from
 Windows Settings > Apps; it asks whether to delete downloaded Roblox versions and settings too.
@@ -25,8 +25,9 @@ cargo build --release
 
 The exe lands in `target/release/Rusticean.exe`. To build the installer too, install
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run
-`iscc /DAppVersion=0.1.0 installer\Rusticean.iss`; it writes `target\installer\Rusticean-Setup.exe`.
-CI builds both for every pull request.
+`iscc /DAppVersion=0.2.0 installer\Rusticean.iss`; it writes `target\installer\Rusticean-Setup.exe`.
+CI builds both for every pull request. To publish a release, bump `version` in `Cargo.toml`
+and push a matching tag (e.g. `v0.2.0`); the Release workflow builds and uploads both.
 
 ## Using it
 
@@ -34,6 +35,14 @@ Run `Rusticean.exe` to open its settings, then click **Launch Roblox**. That
 downloads the latest Roblox into `%LOCALAPPDATA%\Rusticean\Versions`, registers
 it as the handler for `roblox://` and `roblox-player://` links, and opens Roblox. After
 that, clicking **Play** on roblox.com goes through it.
+
+**Launch Roblox Studio** (or `Rusticean.exe -studio`, or the optional Start menu shortcut)
+does the same for Studio: it installs and updates Studio next to the player, then takes over
+`roblox-studio://` links (the **Edit** button on the website, and Studio's sign-in) and
+`.rbxl`/`.rbxlx` place files. Studio keeps its own release channel from Roblox's registry, and
+starts as Roblox ships it: FastFlags, mods, Discord Rich Presence and the other player
+settings below don't apply to it. Until Studio is launched through Rusticean once, its links
+keep going to the stock Studio.
 
 Settings (saved to `Settings.json`):
 
@@ -64,7 +73,7 @@ and [Fishstrap](https://github.com/fishstrap/fishstrap).
 
 A small window shows progress while Roblox downloads and starts, and explains any error.
 
-Flags: `-settings`, `-preview` (show the progress window without launching), `-player [uri]`, `-channel <name>`, `-version <guid>`, `-force`, `-nolaunch`, `-quiet` (no window), `-help`.
+Flags: `-settings`, `-preview` (show the progress window without launching), `-player [uri]`, `-studio [uri or place file]`, `-channel <name>`, `-version <guid>`, `-force`, `-nolaunch`, `-quiet` (no window), `-help`.
 Logs are in `%LOCALAPPDATA%\Rusticean\Logs`.
 
 To go back to the stock launcher, reinstall Roblox from roblox.com.

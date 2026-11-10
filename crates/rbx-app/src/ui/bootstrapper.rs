@@ -11,7 +11,7 @@ use eframe::egui::{
     StrokeKind, Vec2, ViewportCommand,
 };
 use rbx_core::settings::{BootstrapperIcon, BootstrapperStyle};
-use rbx_core::{LaunchOptions, Paths, Settings, Status};
+use rbx_core::{LaunchMode, LaunchOptions, Paths, Settings, Status};
 
 use super::theme::*;
 use rbx_deploy::install::Stage;
@@ -50,6 +50,8 @@ struct BootstrapperApp {
     preview: Option<String>,
     style: BootstrapperStyle,
     title: String,
+    /// "Roblox" or "Roblox Studio", for the window text.
+    app_name: &'static str,
     icon: Icon,
     /// Grown to the full size to show a question or an error in a small style.
     expanded: bool,
@@ -138,10 +140,13 @@ pub fn run(paths: Paths, opts: LaunchOptions, preview: Option<String>) -> anyhow
             apply_visuals(&cc.egui_ctx);
             // launching while Roblox is open closes the running game, so ask first;
             // with multi-instance on, the running game stays open, so there's nothing to ask
+            // (Studio doesn't close a running game, and Studio windows don't close each other)
             let confirm = !opts.no_launch
+                && opts.mode == LaunchMode::Player
                 && settings.confirm_launches
                 && !settings.multi_instance
                 && rbx_win::sync::is_roblox_running();
+            let app_name = opts.mode.display_name();
             let mut app = BootstrapperApp {
                 shared: app_shared,
                 cancel: app_cancel,
@@ -153,6 +158,7 @@ pub fn run(paths: Paths, opts: LaunchOptions, preview: Option<String>) -> anyhow
                 preview,
                 style,
                 title,
+                app_name,
                 icon: Icon::load(&cc.egui_ctx, &settings),
                 expanded: style == BootstrapperStyle::Rusticean,
             };
@@ -398,7 +404,7 @@ impl BootstrapperApp {
         } else if finished {
             ("Have fun!".to_owned(), Some(1.0), String::new())
         } else {
-            describe(status, &mut self.speed)
+            describe(status, &mut self.speed, self.app_name)
         }
     }
 
@@ -500,7 +506,7 @@ impl BootstrapperApp {
         );
         ui.add_space(10.0);
         ui.label(
-            RichText::new("Roblox couldn't be started")
+            RichText::new(format!("{} couldn't be started", self.app_name))
                 .font(bold(18.0))
                 .color(text()),
         );
@@ -542,7 +548,11 @@ impl BootstrapperApp {
 }
 
 /// Headline, progress fraction (None = indeterminate) and detail line for a status.
-fn describe(status: Option<&Status>, speed: &mut SpeedMeter) -> (String, Option<f32>, String) {
+fn describe(
+    status: Option<&Status>,
+    speed: &mut SpeedMeter,
+    app_name: &str,
+) -> (String, Option<f32>, String) {
     match status {
         None | Some(Status::Connecting) => ("Connecting to Roblox…".into(), None, String::new()),
         Some(Status::CheckingForUpdates) => ("Checking for updates…".into(), None, String::new()),
@@ -552,9 +562,9 @@ fn describe(status: Option<&Status>, speed: &mut SpeedMeter) -> (String, Option<
         }) => match &progress.stage {
             Stage::Downloading { .. } => {
                 let headline = if *upgrading {
-                    "Updating Roblox…"
+                    format!("Updating {app_name}…")
                 } else {
-                    "Installing Roblox…"
+                    format!("Installing {app_name}…")
                 };
                 let fraction = (progress.total > 0)
                     .then(|| progress.downloaded as f32 / progress.total as f32);
@@ -567,7 +577,7 @@ fn describe(status: Option<&Status>, speed: &mut SpeedMeter) -> (String, Option<
                 if let Some(rate) = rate {
                     detail.push_str(&format!("  ·  {}/s", format_bytes(rate as u64)));
                 }
-                (headline.into(), fraction, detail)
+                (headline, fraction, detail)
             }
             Stage::Extracting { done, total } => (
                 "Unpacking files…".into(),
@@ -576,7 +586,7 @@ fn describe(status: Option<&Status>, speed: &mut SpeedMeter) -> (String, Option<
             ),
             Stage::Done => ("Finishing up…".into(), Some(1.0), String::new()),
         },
-        Some(Status::Starting) => ("Starting Roblox…".into(), None, String::new()),
+        Some(Status::Starting) => (format!("Starting {app_name}…"), None, String::new()),
         Some(Status::Finished) => ("Have fun!".into(), Some(1.0), String::new()),
     }
 }
