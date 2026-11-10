@@ -10,7 +10,7 @@ on first run.)
 
 ## Installing
 
-Download `Rusticean-Setup.exe` from the latest CI run and run it. It installs for your user
+Download `Rusticean-Setup.exe` from the [latest release](https://github.com/tacobellerontop-sudo/Rusticean/releases/latest) and run it. It installs for your user
 only (no admin prompt) to `%LOCALAPPDATA%\Programs\Rusticean`, adds a Start menu entry
 (and optionally a desktop shortcut), and registers `roblox://` links. Uninstall from
 Windows Settings > Apps; it asks whether to delete downloaded Roblox versions and settings too.
@@ -25,8 +25,9 @@ cargo build --release
 
 The exe lands in `target/release/Rusticean.exe`. To build the installer too, install
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run
-`iscc /DAppVersion=0.1.0 installer\Rusticean.iss`; it writes `target\installer\Rusticean-Setup.exe`.
-CI builds both for every pull request.
+`iscc /DAppVersion=0.2.0 installer\Rusticean.iss`; it writes `target\installer\Rusticean-Setup.exe`.
+CI builds both for every pull request. To publish a release, bump `version` in `Cargo.toml`
+and push a matching tag (e.g. `v0.2.0`); the Release workflow builds and uploads both.
 
 ## Using it
 

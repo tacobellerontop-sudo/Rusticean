@@ -1,0 +1,49 @@
+name: Release
+
+# Pushing a tag like v0.2.0 builds Rusticean and its installer and publishes them
+# as a GitHub release for that tag.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check the tag matches Cargo.toml
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          if ("v$version" -ne "${{ github.ref_name }}") {
+            Write-Error "tag ${{ github.ref_name }} does not match Cargo.toml version $version"
+            exit 1
+          }
+      - run: cargo test
+      - run: cargo build --release
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"').Matches[0].Groups[1].Value
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress | Out-Null }
+          & $iscc "/DAppVersion=$version" installer\Rusticean.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            target/installer/Rusticean-Setup.exe `
+            target/release/Rusticean.exe `
+            --title "Rusticean ${{ github.ref_name }}" `
+            --generate-notes

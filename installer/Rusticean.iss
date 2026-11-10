@@ -1,6 +1,6 @@
 ; Rusticean installer (Inno Setup 6). Built by CI:
 ;   cargo build --release
-;   iscc /DAppVersion=0.1.0 installer\Rusticean.iss
+;   iscc /DAppVersion=0.2.0 installer\Rusticean.iss
 ; Installs per user (no admin prompt) to %LOCALAPPDATA%\Programs\Rusticean. Downloaded
 ; Roblox versions, settings and logs live separately in %LOCALAPPDATA%\Rusticean.
 
