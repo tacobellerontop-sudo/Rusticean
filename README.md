@@ -27,7 +27,8 @@ The exe lands in `target/release/Rusticean.exe`. To build the installer too, ins
 [Inno Setup 6](https://jrsoftware.org/isinfo.php) and run
 `iscc /DAppVersion=0.2.0 installer\Rusticean.iss`; it writes `target\installer\Rusticean-Setup.exe`.
 CI builds both for every pull request. To publish a release, bump `version` in `Cargo.toml`
-and push a matching tag (e.g. `v0.2.0`); the Release workflow builds and uploads both.
+and push a matching tag (e.g. `v0.2.0`), or run the Release workflow by hand on `main`; it
+builds and uploads both.
 
 ## Using it
 
